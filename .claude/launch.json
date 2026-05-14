@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Backend (FastAPI)",
+      "runtimeExecutable": "/Users/ryanmilrad/kbaas/backend/.venv/bin/uvicorn",
+      "runtimeArgs": ["app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+      "port": 8000
+    },
+    {
+      "name": "Frontend (Next.js)",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/ryanmilrad/kbaas/frontend && npm run dev"],
+      "port": 3000
+    },
+    {
+      "name": "MCP Server",
+      "runtimeExecutable": "/Users/ryanmilrad/kbaas/mcp_server/.venv/bin/python",
+      "runtimeArgs": ["server.py"],
+      "port": 3001
+    }
+  ]
+}
