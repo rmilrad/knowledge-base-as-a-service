@@ -193,7 +193,7 @@ resource "aws_lb_target_group" "frontend" {
   target_type = "ip"
 
   health_check {
-    path                = "/"
+    path                = "/login"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     timeout             = 5
@@ -314,7 +314,7 @@ resource "aws_ecs_task_definition" "frontend" {
     }
 
     healthCheck = {
-      command     = ["CMD-SHELL", "wget -q --spider http://localhost:3000/ || exit 1"]
+      command     = ["CMD-SHELL", "wget -q --spider http://localhost:3000/login || exit 1"]
       interval    = 30
       timeout     = 5
       retries     = 3
