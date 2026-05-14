@@ -1,0 +1,14 @@
+aws_region         = "us-east-1"
+project            = "kbaas"
+environment        = "dev"
+
+# Cost-optimized defaults
+db_instance_class     = "db.t4g.micro"
+db_allocated_storage  = 20
+backend_cpu           = 256
+backend_memory        = 512
+backend_desired_count = 1
+
+# Budget
+monthly_budget_limit = 50
+budget_alert_email   = "your-email@example.com"

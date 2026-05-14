@@ -123,6 +123,7 @@ async def stream_answer(
             async for text in stream.text_stream:
                 yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'token', 'content': f'Error calling LLM: {e}'})}\n\n"
+        logger.exception(f"LLM streaming error: {e}")
+        yield f"data: {json.dumps({'type': 'token', 'content': 'An error occurred while generating the response. Please try again.'})}\n\n"
 
     yield "data: [DONE]\n\n"

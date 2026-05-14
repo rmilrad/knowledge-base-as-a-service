@@ -8,7 +8,7 @@ interface Message {
   content: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 const MODELS = [
   { id: "claude-haiku-4-5", label: "Haiku 4.5", desc: "Fast" },
@@ -30,7 +30,13 @@ function renderMarkdown(text: string): string {
   let html = escapeHtml(text);
   html = html.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+    (_match: string, text: string, url: string) => {
+      // Only allow http/https URLs to prevent javascript: XSS
+      if (/^https?:\/\//i.test(url)) {
+        return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+      }
+      return `${text} (${url})`;
+    }
   );
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(

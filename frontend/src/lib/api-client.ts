@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// In production (static export on CloudFront), API calls go to /api/* on the same origin
+// which CloudFront proxies to the ALB. In local dev, we proxy to localhost:8000.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export async function apiFetch<T>(
   path: string,

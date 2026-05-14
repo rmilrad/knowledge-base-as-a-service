@@ -1,5 +1,4 @@
 import logging
-import os
 from pathlib import Path
 
 import boto3
@@ -18,32 +17,36 @@ _local_dir = Path(__file__).resolve().parent.parent.parent / "local_storage"
 def _get_s3_client():
     global _client
     if _client is None:
-        _client = boto3.client(
-            "s3",
-            endpoint_url=settings.s3_endpoint_url,
-            aws_access_key_id=settings.s3_access_key,
-            aws_secret_access_key=settings.s3_secret_key,
-            config=Config(signature_version="s3v4"),
-            region_name="us-east-1",
-        )
+        kwargs = {
+            "config": Config(signature_version="s3v4"),
+            "region_name": settings.s3_region,
+        }
+        # Local dev with MinIO: use explicit endpoint + keys
+        if settings.s3_endpoint_url:
+            kwargs["endpoint_url"] = settings.s3_endpoint_url
+            kwargs["aws_access_key_id"] = settings.s3_access_key
+            kwargs["aws_secret_access_key"] = settings.s3_secret_key
+        # On AWS: boto3 uses IAM role credentials automatically
+
+        _client = boto3.client("s3", **kwargs)
     return _client
 
 
 def _check_s3() -> bool:
-    """Check if S3/MinIO is reachable. Cache the result."""
+    """Check if S3 is reachable. Fall back to local storage if not."""
     global _use_local
     try:
         client = _get_s3_client()
         client.head_bucket(Bucket=settings.s3_bucket_name)
-        logger.info("S3/MinIO is available")
+        logger.info(f"S3 bucket '{settings.s3_bucket_name}' is available")
         return True
     except (ClientError, EndpointConnectionError, Exception) as e:
-        logger.warning(f"S3/MinIO not available ({e}), using local filesystem storage")
+        logger.warning(f"S3 not available ({e}), using local filesystem storage")
         _use_local = True
         return False
 
 
-# Try S3 on first import, fall back to local
+# Check S3 on module load
 _check_s3()
 
 
@@ -66,7 +69,6 @@ async def upload_to_s3(key: str, data: bytes):
         logger.info(f"Uploaded to S3: {key} ({len(data)} bytes)")
     except Exception as e:
         logger.error(f"S3 upload failed for {key}: {e}")
-        # Fall back to local storage
         p = _local_path(key)
         p.write_bytes(data)
         logger.info(f"Fell back to local storage: {p}")
@@ -89,7 +91,6 @@ async def download_from_s3(key: str) -> bytes:
         return data
     except Exception as e:
         logger.error(f"S3 download failed for {key}: {e}")
-        # Try local fallback
         p = _local_path(key)
         if p.exists():
             return p.read_bytes()

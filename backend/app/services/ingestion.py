@@ -45,14 +45,47 @@ async def extract_text_from_file(s3_key: str, file_type: str) -> str:
     return text
 
 
+def _validate_url(url: str) -> str:
+    """Validate URL to prevent SSRF attacks."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
+    if not parsed.hostname:
+        raise ValueError("URL must have a hostname")
+
+    # Resolve hostname and check for private/reserved IPs
+    try:
+        resolved = socket.getaddrinfo(parsed.hostname, None)
+        for _, _, _, _, sockaddr in resolved:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                raise ValueError(f"URL resolves to private/reserved IP: {ip}")
+    except socket.gaierror:
+        raise ValueError(f"Could not resolve hostname: {parsed.hostname}")
+
+    return url
+
+
 async def extract_text_from_url(url: str) -> str:
     logger.info(f"  Fetching URL: {url}")
     try:
+        url = _validate_url(url)
         from trafilatura import extract
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            max_redirects=5,
+        ) as client:
             response = await client.get(url)
             response.raise_for_status()
+            # M4: Limit response size to 50MB
+            if len(response.content) > 50 * 1024 * 1024:
+                raise RuntimeError("URL content exceeds 50MB limit")
             html = response.text
             logger.info(f"  Fetched {len(html)} chars of HTML (status {response.status_code})")
 

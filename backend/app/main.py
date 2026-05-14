@@ -15,9 +15,15 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.getLogger("kbaas").info("KBaaS backend starting")
+    from app.config import settings
+
+    logger = logging.getLogger("kbaas")
+    if not settings.jwt_secret_key:
+        logger.critical("JWT_SECRET_KEY is not set — authentication will not work!")
+        raise RuntimeError("JWT_SECRET_KEY must be set")
+    logger.info("KBaaS backend starting")
     yield
-    logging.getLogger("kbaas").info("KBaaS backend shutting down")
+    logger.info("KBaaS backend shutting down")
 
 
 app = FastAPI(title="KBaaS", version="0.1.0", lifespan=lifespan)
@@ -31,12 +37,14 @@ async def log_requests(request: Request, call_next):
     logger.info(f"{request.method} {request.url.path} -> {response.status_code}")
     return response
 
+from app.config import settings
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(router, prefix="/api")

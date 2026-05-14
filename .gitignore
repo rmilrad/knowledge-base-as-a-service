@@ -35,3 +35,13 @@ local_storage/
 
 # Alembic
 alembic/versions/__pycache__/
+
+# Terraform
+infra/.terraform/
+infra/terraform.tfstate*
+infra/tfplan
+infra/.terraform.lock.hcl
+infra/*.tfvars
+
+# Claude Code
+.claude/

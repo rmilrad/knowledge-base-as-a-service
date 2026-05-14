@@ -19,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_index('idx_chunk_embedding_hnsw', table_name='chunks', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_with={'m': '16', 'ef_construction': '64'}, postgresql_using='hnsw')
+    op.execute("DROP INDEX IF EXISTS idx_chunk_embedding_hnsw")
     op.alter_column('chunks', 'embedding',
                existing_type=pgvector.sqlalchemy.Vector(1536),
                type_=pgvector.sqlalchemy.Vector(384),
