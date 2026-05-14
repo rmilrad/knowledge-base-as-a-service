@@ -5,6 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-client";
 import { isLoggedIn } from "@/lib/auth";
+import AppLayout from "@/components/app-layout";
+
+interface KnowledgeBase {
+  id: string;
+  name: string;
+}
 
 interface ApiKey {
   id: string;
@@ -19,17 +25,22 @@ export default function SettingsPage() {
   const router = useRouter();
   const id = params.id as string;
 
+  const [kb, setKb] = useState<KnowledgeBase | null>(null);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [keyName, setKeyName] = useState("");
   const [newKey, setNewKey] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const loadKeys = useCallback(async () => {
+  const loadData = useCallback(async () => {
     try {
-      const data = await apiFetch<ApiKey[]>(`/api/kb/${id}/keys`);
-      setKeys(data);
+      const [kbData, keysData] = await Promise.all([
+        apiFetch<KnowledgeBase>(`/api/kb/${id}`),
+        apiFetch<ApiKey[]>(`/api/kb/${id}/keys`),
+      ]);
+      setKb(kbData);
+      setKeys(keysData);
     } catch {
-      setError("Failed to load API keys");
+      setError("Failed to load settings");
     }
   }, [id]);
 
@@ -38,8 +49,8 @@ export default function SettingsPage() {
       router.push("/login");
       return;
     }
-    loadKeys();
-  }, [router, loadKeys]);
+    loadData();
+  }, [router, loadData]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -50,7 +61,7 @@ export default function SettingsPage() {
       });
       setNewKey(data.key);
       setKeyName("");
-      loadKeys();
+      loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create key");
     }
@@ -59,7 +70,7 @@ export default function SettingsPage() {
   async function handleRevoke(keyId: string) {
     try {
       await apiFetch(`/api/kb/${id}/keys/${keyId}`, { method: "DELETE" });
-      loadKeys();
+      loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to revoke key");
     }
@@ -80,27 +91,19 @@ export default function SettingsPage() {
     2
   );
 
-  return (
-    <>
-      <nav>
-        <h1>
-          <Link href="/dashboard">KBaaS</Link> /{" "}
-          <Link href={`/kb/${id}`}>KB</Link> / Settings
-        </h1>
-      </nav>
+  if (!kb) return <AppLayout><p style={{ padding: "2rem", color: "var(--text-tertiary)" }}>Loading...</p></AppLayout>;
 
+  return (
+    <AppLayout kbId={kb.id} kbName={kb.name}>
       <div className="tabs">
         <Link href={`/kb/${id}`}>Sources</Link>
-        <Link href={`/kb/${id}/chat`}>Chat</Link>
-        <Link href={`/kb/${id}/settings`} className="active">
-          Settings
-        </Link>
+        <Link href={`/kb/${id}/settings`} className="active">Settings</Link>
       </div>
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>}
 
-      <h3>API Keys</h3>
-      <p style={{ color: "#666", marginBottom: "1rem" }}>
+      <h3 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem" }}>API Keys</h3>
+      <p style={{ color: "var(--text-tertiary)", marginBottom: "1rem", fontSize: "0.85rem" }}>
         Use API keys to query this knowledge base programmatically or via MCP.
       </p>
 
@@ -122,30 +125,30 @@ export default function SettingsPage() {
       {newKey && (
         <div
           style={{
-            background: "#fffbdd",
-            border: "1px solid #e6d421",
+            background: "var(--warning-bg)",
+            border: "1px solid #ffd54f",
             padding: "1rem",
-            borderRadius: 8,
+            borderRadius: "var(--radius-md)",
             marginBottom: "1rem",
           }}
         >
-          <strong>New API Key (copy now — it won&apos;t be shown again):</strong>
+          <strong style={{ fontSize: "0.85rem" }}>New API Key (copy now — it won&apos;t be shown again):</strong>
           <pre
             style={{
-              background: "#f5f5f5",
-              padding: "0.5rem",
+              background: "var(--bg-tertiary)",
+              padding: "0.5rem 0.75rem",
               marginTop: "0.5rem",
-              borderRadius: 4,
+              borderRadius: "var(--radius-sm)",
               overflowX: "auto",
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.8rem",
             }}
           >
             {newKey}
           </pre>
           <button
-            onClick={() => {
-              navigator.clipboard.writeText(newKey);
-            }}
-            style={{ marginTop: "0.5rem" }}
+            onClick={() => navigator.clipboard.writeText(newKey)}
+            style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}
           >
             Copy
           </button>
@@ -153,29 +156,27 @@ export default function SettingsPage() {
       )}
 
       {keys.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "2rem" }}>
+        <table style={{ marginBottom: "2rem" }}>
           <thead>
-            <tr style={{ borderBottom: "2px solid #eee", textAlign: "left" }}>
-              <th style={{ padding: "0.5rem" }}>Name</th>
-              <th style={{ padding: "0.5rem" }}>Prefix</th>
-              <th style={{ padding: "0.5rem" }}>Created</th>
-              <th style={{ padding: "0.5rem" }}></th>
+            <tr>
+              <th>Name</th>
+              <th>Prefix</th>
+              <th>Created</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {keys.map((k) => (
-              <tr key={k.id} style={{ borderBottom: "1px solid #eee" }}>
-                <td style={{ padding: "0.5rem" }}>{k.name || "—"}</td>
-                <td style={{ padding: "0.5rem" }}>
-                  <code>{k.key_prefix}...</code>
+              <tr key={k.id}>
+                <td>{k.name || "—"}</td>
+                <td>
+                  <code style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}>{k.key_prefix}...</code>
                 </td>
-                <td style={{ padding: "0.5rem" }}>
-                  {new Date(k.created_at).toLocaleDateString()}
-                </td>
-                <td style={{ padding: "0.5rem" }}>
+                <td>{new Date(k.created_at).toLocaleDateString()}</td>
+                <td>
                   <button
                     className="danger"
-                    style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem" }}
+                    style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
                     onClick={() => handleRevoke(k.id)}
                   >
                     Revoke
@@ -187,27 +188,29 @@ export default function SettingsPage() {
         </table>
       )}
 
-      <h3>MCP Connection</h3>
-      <p style={{ color: "#666", marginBottom: "0.5rem" }}>
+      <h3 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem" }}>MCP Connection</h3>
+      <p style={{ color: "var(--text-tertiary)", marginBottom: "0.5rem", fontSize: "0.85rem" }}>
         Add this to your Claude Desktop or MCP client configuration:
       </p>
       <pre
         style={{
-          background: "#f5f5f5",
+          background: "var(--bg-tertiary)",
           padding: "1rem",
-          borderRadius: 8,
+          borderRadius: "var(--radius-md)",
           overflowX: "auto",
-          fontSize: "0.85rem",
+          fontFamily: "var(--font-mono)",
+          fontSize: "0.8rem",
+          lineHeight: 1.6,
         }}
       >
         {mcpConfig}
       </pre>
       <button
         onClick={() => navigator.clipboard.writeText(mcpConfig)}
-        style={{ marginTop: "0.5rem" }}
+        style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}
       >
         Copy Config
       </button>
-    </>
+    </AppLayout>
   );
 }

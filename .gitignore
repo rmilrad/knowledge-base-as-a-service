@@ -30,5 +30,8 @@ Thumbs.db
 # Docker
 docker-data/
 
+# Local file storage (when MinIO not running)
+local_storage/
+
 # Alembic
 alembic/versions/__pycache__/
