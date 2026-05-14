@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-client";
-import { isLoggedIn, clearToken } from "@/lib/auth";
+import { isLoggedIn } from "@/lib/auth";
+import AppLayout from "@/components/app-layout";
 
 interface KnowledgeBase {
   id: string;
@@ -18,8 +19,9 @@ interface KnowledgeBase {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(searchParams.get("new") === "1");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
@@ -57,29 +59,12 @@ export default function DashboardPage() {
     }
   }
 
-  function handleLogout() {
-    clearToken();
-    router.push("/login");
-  }
-
   return (
-    <>
-      <nav>
-        <h1>KBaaS</h1>
-        <button onClick={handleLogout}>Log Out</button>
-      </nav>
-
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "1.5rem",
-        }}
-      >
-        <h2>Your Knowledge Bases</h2>
+    <AppLayout onNewKB={() => setShowForm(true)}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+        <h2 style={{ fontSize: "1.25rem", fontWeight: 600 }}>Knowledge Bases</h2>
         <button className="primary" onClick={() => setShowForm(!showForm)}>
-          + New Knowledge Base
+          + New
         </button>
       </div>
 
@@ -89,10 +74,11 @@ export default function DashboardPage() {
         <form
           onSubmit={handleCreate}
           style={{
-            border: "1px solid #ddd",
+            border: `1px solid var(--border)`,
             padding: "1.25rem",
-            borderRadius: 8,
+            borderRadius: "var(--radius-md)",
             marginBottom: "1.5rem",
+            background: "var(--bg-secondary)",
           }}
         >
           <div className="form-group">
@@ -113,23 +99,26 @@ export default function DashboardPage() {
               placeholder="What is this knowledge base about?"
             />
           </div>
-          <button type="submit" className="primary">
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowForm(false)}
-            style={{ marginLeft: "0.5rem" }}
-          >
-            Cancel
-          </button>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <button type="submit" className="primary">Create</button>
+            <button type="button" onClick={() => setShowForm(false)}>Cancel</button>
+          </div>
         </form>
       )}
 
       {kbs.length === 0 && !showForm ? (
-        <p style={{ color: "#666" }}>
-          No knowledge bases yet. Create one to get started.
-        </p>
+        <div style={{
+          textAlign: "center",
+          padding: "4rem 2rem",
+          color: "var(--text-tertiary)",
+        }}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.3, marginBottom: "1rem" }}>
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+          </svg>
+          <p style={{ fontSize: "1rem" }}>No knowledge bases yet</p>
+          <p style={{ fontSize: "0.85rem", marginTop: "0.25rem" }}>Create one to get started</p>
+        </div>
       ) : (
         <div className="grid">
           {kbs.map((kb) => (
@@ -139,15 +128,15 @@ export default function DashboardPage() {
               style={{ textDecoration: "none", color: "inherit" }}
             >
               <div className="card">
-                <h3>{kb.name}</h3>
+                <h3 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem" }}>{kb.name}</h3>
                 {kb.description && (
-                  <p style={{ color: "#666", fontSize: "0.9rem" }}>
+                  <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>
                     {kb.description}
                   </p>
                 )}
-                <div style={{ marginTop: "0.75rem", fontSize: "0.85rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", fontSize: "0.8rem" }}>
                   <span className={`badge ${kb.status}`}>{kb.status}</span>
-                  <span style={{ marginLeft: "0.75rem", color: "#666" }}>
+                  <span style={{ color: "var(--text-tertiary)" }}>
                     {kb.document_count} docs &middot; {kb.chunk_count} chunks
                   </span>
                 </div>
@@ -156,6 +145,6 @@ export default function DashboardPage() {
           ))}
         </div>
       )}
-    </>
+    </AppLayout>
   );
 }
