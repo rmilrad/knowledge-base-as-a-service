@@ -65,6 +65,16 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Override body overflow:hidden from globals.css so admin page can scroll
+    document.body.style.overflow = "auto";
+    document.body.style.height = "auto";
+    return () => {
+      document.body.style.overflow = "";
+      document.body.style.height = "";
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isLoggedIn()) {
       router.push("/login");
       return;
@@ -144,7 +154,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--shell-bg)", fontFamily: "var(--font-sans)" }}>
+    <div style={{ minHeight: "100vh", background: "var(--shell-bg)", fontFamily: "var(--font-sans)", overflow: "auto" }}>
       {/* Header */}
       <div style={{
         background: "var(--bg-primary)",

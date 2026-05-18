@@ -34,10 +34,14 @@ async def admin_stats(
     ).all()
     doc_statuses = {row[0]: row[1] for row in status_rows}
 
-    # Storage (total file size)
-    total_bytes = (
+    # Storage — file uploads (S3) + chunk text content
+    file_bytes = (
         await db.execute(select(func.coalesce(func.sum(Document.file_size_bytes), 0)))
     ).scalar() or 0
+    chunk_text_bytes = (
+        await db.execute(select(func.coalesce(func.sum(func.length(Chunk.content)), 0)))
+    ).scalar() or 0
+    total_bytes = file_bytes + chunk_text_bytes
 
     # Recent users (last 20)
     recent_users_rows = (
@@ -57,18 +61,21 @@ async def admin_stats(
         for r in recent_users_rows
     ]
 
-    # Top KBs by chunk count
+    # Top KBs by actual chunk count (live query, not cached counters)
     top_kbs_rows = (
         await db.execute(
             select(
                 KnowledgeBase.id,
                 KnowledgeBase.name,
-                KnowledgeBase.document_count,
-                KnowledgeBase.chunk_count,
+                func.count(func.distinct(Document.id)).label("doc_count"),
+                func.count(Chunk.id).label("chunk_count"),
                 User.email,
             )
             .join(User, KnowledgeBase.user_id == User.id)
-            .order_by(KnowledgeBase.chunk_count.desc())
+            .outerjoin(Document, Document.kb_id == KnowledgeBase.id)
+            .outerjoin(Chunk, Chunk.kb_id == KnowledgeBase.id)
+            .group_by(KnowledgeBase.id, KnowledgeBase.name, User.email)
+            .order_by(func.count(Chunk.id).desc())
             .limit(20)
         )
     ).all()
