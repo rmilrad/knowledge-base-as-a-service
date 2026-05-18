@@ -133,23 +133,3 @@ async def stream_answer(
     yield "data: [DONE]\n\n"
 
 
-async def suggest_title(text: str) -> str | None:
-    """Use Claude Haiku to suggest a concise title from document content."""
-    try:
-        client = _get_async_client()
-        # Use first ~2000 chars to keep it cheap and fast
-        snippet = text[:2000]
-        message = await client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=60,
-            messages=[{
-                "role": "user",
-                "content": f"Based on this document content, suggest a short, descriptive title (under 80 characters). Reply with ONLY the title, nothing else.\n\n{snippet}",
-            }],
-        )
-        title = message.content[0].text.strip().strip('"\'')
-        logger.info(f"  Claude suggested title: {title}")
-        return title[:200] if title else None
-    except Exception as e:
-        logger.warning(f"  Title suggestion failed: {e}")
-        return None

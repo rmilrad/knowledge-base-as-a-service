@@ -193,11 +193,7 @@ async def ingest_document(doc_id: str):
             await _update_progress(db, doc, "extracting", 10, "Downloading and extracting text...")
             t0 = time.time()
             if doc.source_type == "url" and doc.source_url:
-                raw_text, page_title = await extract_text_from_url(doc.source_url)
-                # Auto-set title from page <title> if the document title is still the raw URL
-                if page_title and doc.title == doc.source_url:
-                    doc.title = page_title
-                    logger.info(f"[{doc_id}] Auto-set title from page: {page_title}")
+                raw_text, _ = await extract_text_from_url(doc.source_url)
             elif doc.s3_key and doc.file_type:
                 raw_text = await extract_text_from_file(doc.s3_key, doc.file_type)
             else:
@@ -212,20 +208,6 @@ async def ingest_document(doc_id: str):
             if len(raw_text) > MAX_TEXT_CHARS:
                 logger.warning(f"[{doc_id}] Text too large ({len(raw_text)} chars), truncating to {MAX_TEXT_CHARS}")
                 raw_text = raw_text[:MAX_TEXT_CHARS]
-
-            # Step 1b: Suggest title using Claude if still a raw URL or filename
-            await _update_progress(db, doc, "analyzing", 25, "Generating title...")
-            is_raw_url = doc.source_type == "url" and doc.title and doc.title.startswith("http")
-            is_filename = doc.source_type == "file_upload" and doc.title and "." in doc.title
-            if is_raw_url or is_filename:
-                try:
-                    from app.services.llm import suggest_title
-                    suggested = await suggest_title(raw_text)
-                    if suggested:
-                        doc.title = suggested
-                        logger.info(f"[{doc_id}] Claude suggested title: {suggested}")
-                except Exception as e:
-                    logger.warning(f"[{doc_id}] Title suggestion failed (non-fatal): {e}")
 
             # Step 2: Chunk
             await _update_progress(db, doc, "chunking", 35, "Splitting into chunks...")
