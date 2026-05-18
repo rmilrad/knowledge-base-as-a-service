@@ -46,8 +46,24 @@ def _build_context(chunks: List[Dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def _build_system_prompt(response_style: str = "balanced") -> str:
+def _build_system_prompt(response_style: str = "balanced", engineer_mode: bool = False) -> str:
     style = RESPONSE_STYLES.get(response_style, RESPONSE_STYLES["balanced"])
+
+    if engineer_mode:
+        return f"""You are a senior software engineer assistant that answers technical questions based on the provided knowledge base context.
+
+Rules:
+- Answer ONLY based on the provided context. If the context doesn't contain enough information, say so clearly.
+- EVERY claim or explanation MUST be backed by actual code from the context. Include relevant code snippets using markdown code blocks with the appropriate language tag.
+- When explaining how something works, show the actual implementation code — API calls, function signatures, data structures, configuration, etc.
+- Structure your response as: explanation → supporting code → explanation → supporting code. Never explain without code evidence.
+- If the context contains API endpoints, show the exact endpoint, method, and request/response format.
+- If the context contains smart contract or on-chain interactions, show the exact function calls and parameters.
+- Use inline citations by linking to the source title like this: [source title](url). Place citations naturally within or at the end of each claim.
+- Do NOT include a separate sources list at the end.
+- If the context doesn't contain actual code to support an answer, explicitly state: "No code found in the knowledge base for this."
+- {style['instruction']}"""
+
     return f"""You are a helpful assistant that answers questions based on the provided knowledge base context.
 
 Rules:
@@ -63,6 +79,7 @@ async def generate_answer(
     chunks: List[Dict],
     model: str = "claude-sonnet-4-5",
     response_style: str = "balanced",
+    engineer_mode: bool = False,
 ) -> str:
     if not chunks:
         return "No relevant information found in the knowledge base."
@@ -77,7 +94,7 @@ async def generate_answer(
     message = await client.messages.create(
         model=model,
         max_tokens=style["max_tokens"],
-        system=_build_system_prompt(response_style),
+        system=_build_system_prompt(response_style, engineer_mode),
         messages=[
             {
                 "role": "user",
@@ -93,6 +110,7 @@ async def stream_answer(
     chunks: List[Dict],
     model: str = "claude-sonnet-4-5",
     response_style: str = "balanced",
+    engineer_mode: bool = False,
 ) -> AsyncGenerator[str, None]:
     if not chunks:
         yield f"data: {json.dumps({'type': 'token', 'content': 'No relevant information found in the knowledge base.'})}\n\n"
@@ -106,6 +124,7 @@ async def stream_answer(
     client = _get_async_client()
     context = _build_context(chunks)
 
+    # In engineer mode, retrieve more chunks for richer code context
     sources_data = [
         {"title": c["title"], "content": c["content"][:200]} for c in chunks
     ]
@@ -115,7 +134,7 @@ async def stream_answer(
         async with client.messages.stream(
             model=model,
             max_tokens=style["max_tokens"],
-            system=_build_system_prompt(response_style),
+            system=_build_system_prompt(response_style, engineer_mode),
             messages=[
                 {
                     "role": "user",

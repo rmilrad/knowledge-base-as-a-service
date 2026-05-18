@@ -27,11 +27,39 @@ function escapeHtml(text: string): string {
 }
 
 function renderMarkdown(text: string): string {
-  let html = escapeHtml(text);
+  // Handle code blocks BEFORE escaping HTML (they contain raw code)
+  const codeBlocks: string[] = [];
+  let processed = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(
+      `<pre style="background:var(--bg-tertiary,#1e1e1e);border:1px solid var(--border);border-radius:6px;padding:0.75rem;overflow-x:auto;font-size:0.8rem;margin:0.5rem 0"><code>${escapeHtml(code.trimEnd())}</code></pre>`
+    );
+    return `__CODE_BLOCK_${idx}__`;
+  });
+
+  // Handle inline code before escaping
+  const inlineCode: string[] = [];
+  processed = processed.replace(/`([^`]+)`/g, (_match, code) => {
+    const idx = inlineCode.length;
+    inlineCode.push(
+      `<code style="background:var(--bg-tertiary,#1e1e1e);padding:0.1rem 0.35rem;border-radius:3px;font-size:0.85em">${escapeHtml(code)}</code>`
+    );
+    return `__INLINE_CODE_${idx}__`;
+  });
+
+  let html = escapeHtml(processed);
+
+  // Restore code blocks and inline code
+  codeBlocks.forEach((block, i) => {
+    html = html.replace(`__CODE_BLOCK_${i}__`, block);
+  });
+  inlineCode.forEach((code, i) => {
+    html = html.replace(`__INLINE_CODE_${i}__`, code);
+  });
+
   html = html.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
     (_match: string, text: string, url: string) => {
-      // Only allow http/https URLs to prevent javascript: XSS
       if (/^https?:\/\//i.test(url)) {
         return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
       }
@@ -60,6 +88,7 @@ export default function ChatPanel({ kbId, kbName, open, onClose }: ChatPanelProp
   const [loading, setLoading] = useState(false);
   const [model, setModel] = useState("claude-sonnet-4-5");
   const [responseStyle, setResponseStyle] = useState("balanced");
+  const [engineerMode, setEngineerMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -103,7 +132,7 @@ export default function ChatPanel({ kbId, kbName, open, onClose }: ChatPanelProp
           "Content-Type": "application/json",
           Authorization: `Bearer ${getToken()}`,
         },
-        body: JSON.stringify({ question, model, response_style: responseStyle }),
+        body: JSON.stringify({ question, model, response_style: responseStyle, engineer_mode: engineerMode }),
       });
 
       if (!res.ok) throw new Error("Chat request failed");
@@ -195,6 +224,36 @@ export default function ChatPanel({ kbId, kbName, open, onClose }: ChatPanelProp
             </option>
           ))}
         </select>
+        <label
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.35rem",
+            cursor: "pointer",
+            fontSize: "0.75rem",
+            fontWeight: 500,
+            padding: "0.25rem 0.5rem",
+            borderRadius: "var(--radius-sm)",
+            background: engineerMode ? "var(--accent, #2196f3)" : "transparent",
+            color: engineerMode ? "#fff" : "var(--text-tertiary)",
+            border: engineerMode ? "none" : "1px solid var(--border)",
+            transition: "all 0.2s",
+            userSelect: "none",
+          }}
+          title="Engineer mode: responses must include code snippets from the knowledge base"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
+          </svg>
+          <input
+            type="checkbox"
+            checked={engineerMode}
+            onChange={(e) => setEngineerMode(e.target.checked)}
+            style={{ display: "none" }}
+          />
+          Engineer
+        </label>
       </div>
 
       <div className="chat-panel-messages">

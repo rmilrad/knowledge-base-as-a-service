@@ -37,9 +37,12 @@ async def query_kb(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_user_kb(db, kb_id, user.id)
-    chunks = await retrieve_chunks(db, kb_id, body.question, body.top_k)
+    # In engineer mode, retrieve more chunks for richer code context
+    top_k = body.top_k if not body.engineer_mode else max(body.top_k, 10)
+    chunks = await retrieve_chunks(db, kb_id, body.question, top_k)
     answer = await generate_answer(
-        body.question, chunks, model=body.model, response_style=body.response_style
+        body.question, chunks, model=body.model,
+        response_style=body.response_style, engineer_mode=body.engineer_mode,
     )
     return QueryResponse(
         answer=answer,
@@ -58,10 +61,12 @@ async def chat_kb(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_user_kb(db, kb_id, user.id)
-    chunks = await retrieve_chunks(db, kb_id, body.question, body.top_k)
+    top_k = body.top_k if not body.engineer_mode else max(body.top_k, 10)
+    chunks = await retrieve_chunks(db, kb_id, body.question, top_k)
     return StreamingResponse(
         stream_answer(
-            body.question, chunks, model=body.model, response_style=body.response_style
+            body.question, chunks, model=body.model,
+            response_style=body.response_style, engineer_mode=body.engineer_mode,
         ),
         media_type="text/event-stream",
     )
