@@ -66,8 +66,8 @@ async def upload_documents(
             raise HTTPException(status_code=400, detail=f"Unsupported file type: .{ext}")
 
         content = await file.read()
-        if len(content) > 50 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File too large (max 50MB)")
+        if len(content) > 500 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 500MB)")
 
         file_type = "md" if ext in ("md", "markdown") else ("txt" if ext in ("txt", "text") else ext)
 

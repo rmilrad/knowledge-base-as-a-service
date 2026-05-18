@@ -99,9 +99,9 @@ async def extract_text_from_url(url: str) -> tuple[str, str | None]:
         ) as client:
             response = await client.get(url)
             response.raise_for_status()
-            # Limit response size to 50MB
-            if len(response.content) > 50 * 1024 * 1024:
-                raise RuntimeError("URL content exceeds 50MB limit")
+            # Limit response size to 500MB
+            if len(response.content) > 500 * 1024 * 1024:
+                raise RuntimeError("URL content exceeds 500MB limit")
 
             content_type = response.headers.get("content-type", "")
             raw_bytes = response.content
