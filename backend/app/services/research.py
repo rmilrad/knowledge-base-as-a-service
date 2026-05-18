@@ -1,9 +1,10 @@
-"""AI-powered research service for discovering relevant URLs and repositories.
+"""Deep dive service: searches the web for additional info beyond the KB.
 
-Uses Claude to generate search queries, GitHub API for repo/code search,
-and Claude again to curate and rank results into a structured list.
+Uses Claude's web_search tool for reliable search from any environment,
+GitHub API for repo search, and Claude Sonnet for answer synthesis.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -27,7 +28,7 @@ def _get_anthropic_client():
 
 
 # ---------------------------------------------------------------------------
-# GitHub search helpers
+# Search helpers
 # ---------------------------------------------------------------------------
 
 async def _github_search_repos(query: str, per_page: int = 15) -> list[dict]:
@@ -58,250 +59,203 @@ async def _github_search_repos(query: str, per_page: int = 15) -> list[dict]:
         return results
 
 
-async def _github_search_code(query: str, per_page: int = 10) -> list[dict]:
-    """Search GitHub code for relevant files (READMEs, docs, etc.)."""
-    logger.info(f"  GitHub code search: {query}")
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(
-            "https://api.github.com/search/code",
-            params={"q": query, "per_page": per_page},
-            headers={"Accept": "application/vnd.github+json"},
-        )
-        if resp.status_code != 200:
-            logger.warning(f"  GitHub code search failed: {resp.status_code}")
-            return []
-        data = resp.json()
-        results = []
-        seen_repos = set()
-        for item in data.get("items", []):
-            repo_name = item.get("repository", {}).get("full_name", "")
-            if repo_name in seen_repos:
-                continue
-            seen_repos.add(repo_name)
-            results.append({
-                "url": item.get("html_url", ""),
-                "title": f"{repo_name}/{item.get('name', '')}",
-                "description": f"Code match in {item.get('path', '')}",
-                "source": "github",
-                "type": "code",
-            })
-        logger.info(f"  GitHub code search returned {len(results)} results")
-        return results
-
-
-# ---------------------------------------------------------------------------
-# Web search via Claude's web_search tool
-# ---------------------------------------------------------------------------
-
 async def _web_search(query: str) -> list[dict]:
-    """Use a simple web search to find relevant pages."""
-    logger.info(f"  Web search: {query}")
-    # Use DuckDuckGo HTML search as a free fallback
+    """Use Claude's web_search tool to find relevant pages.
+
+    This uses the Anthropic API's built-in web search capability which is
+    reliable from any environment (unlike DuckDuckGo HTML scraping which
+    returns 202 from AWS IPs).
+    """
+    logger.info(f"  Web search (Claude): {query}")
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(
-                "https://html.duckduckgo.com/html/",
-                params={"q": query},
-                headers={"User-Agent": "Mozilla/5.0 (compatible; KBaaS/1.0)"},
-            )
-            if resp.status_code != 200:
-                logger.warning(f"  Web search failed: {resp.status_code}")
-                return []
+        client = _get_anthropic_client()
+        response = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=256,
+            tools=[{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 1,
+            }],
+            messages=[{
+                "role": "user",
+                "content": f"Search for: {query}",
+            }],
+        )
 
-            # Parse results from DDG HTML
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(resp.text, "html.parser")
-            results = []
-            for result_div in soup.select(".result"):
-                title_el = result_div.select_one(".result__title a")
-                snippet_el = result_div.select_one(".result__snippet")
-                if not title_el:
-                    continue
-                href = title_el.get("href", "")
-                # DDG wraps URLs in a redirect — extract the real URL
-                if "uddg=" in href:
-                    from urllib.parse import unquote, urlparse, parse_qs
-                    parsed = urlparse(href)
-                    qs = parse_qs(parsed.query)
-                    real_url = unquote(qs.get("uddg", [href])[0])
-                else:
-                    real_url = href
+        results = []
+        for block in response.content:
+            if block.type == "web_search_tool_result":
+                for item in block.content:
+                    if hasattr(item, "url") and item.url:
+                        results.append({
+                            "url": item.url,
+                            "title": getattr(item, "title", "") or "",
+                            "description": "",
+                            "source": "web",
+                            "type": "webpage",
+                        })
+                        if len(results) >= 10:
+                            break
 
-                if not real_url.startswith("http"):
-                    continue
-
-                results.append({
-                    "url": real_url,
-                    "title": title_el.get_text(strip=True),
-                    "description": snippet_el.get_text(strip=True) if snippet_el else "",
-                    "source": "web",
-                    "type": "webpage",
-                })
-                if len(results) >= 10:
-                    break
-
-            logger.info(f"  Web search returned {len(results)} results")
-            return results
+        logger.info(f"  Web search returned {len(results)} results")
+        return results
     except Exception as e:
         logger.warning(f"  Web search failed: {e}")
         return []
 
 
 # ---------------------------------------------------------------------------
-# Main research orchestration
+# Deep dive
 # ---------------------------------------------------------------------------
 
-async def research_topic(prompt: str) -> AsyncGenerator[str, None]:
-    """Research a topic and stream results as SSE events.
+async def deep_dive(question: str, current_answer: str) -> AsyncGenerator[str, None]:
+    """Search the web for deeper information about a chat question.
 
-    Yields SSE-formatted events:
-    - {"type": "status", "message": "..."} — progress updates
-    - {"type": "results", "results": [...]} — final curated results
+    Yields SSE events:
+    - {"type": "status", "message": "..."} — progress
+    - {"type": "token", "content": "..."} — streamed enriched answer
+    - {"type": "sources_found", "sources": [...]} — URLs found, user can add to KB
     """
     client = _get_anthropic_client()
 
-    # Step 1: Use Claude to generate search queries
-    yield _sse({"type": "status", "message": "Analyzing your research request..."})
+    yield _sse({"type": "status", "message": "Searching the web..."})
 
+    # Step 1: Generate search queries
     query_response = await client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=500,
+        max_tokens=400,
         messages=[{
             "role": "user",
-            "content": f"""Based on this research request, generate search queries to find relevant codebases, documentation, and resources.
+            "content": f"""Generate search queries to find deeper technical information about this question.
 
-Research request: {prompt}
+Question: {question}
 
-Respond with a JSON object containing:
-- "github_queries": list of 3-5 GitHub search queries (optimized for GitHub's search syntax, e.g. "avalanche staking" or "ava-labs subnet")
-- "web_queries": list of 2-3 general web search queries for documentation and guides
-- "focus": one of "codebase", "documentation", "mixed" — what the user seems most interested in
+Current answer from the knowledge base (may be incomplete):
+{current_answer[:500]}
 
-Respond with ONLY the JSON, no other text."""
+Generate 3-4 targeted search queries that would find more detailed information, code examples, and documentation. Focus on filling gaps in the current answer.
+
+IMPORTANT: Do NOT use "site:" prefixes in queries. Use plain natural language queries.
+
+Respond with ONLY a JSON object:
+{{"queries": ["query1", "query2", ...], "project_org": "the primary GitHub org or company name if identifiable, else null"}}"""
         }],
     )
 
     try:
         raw = query_response.content[0].text.strip()
-        # Strip markdown code fences if present
         raw = re.sub(r'^```(?:json)?\s*', '', raw)
         raw = re.sub(r'\s*```$', '', raw)
-        search_plan = json.loads(raw)
+        parsed = json.loads(raw)
+        queries = parsed.get("queries", parsed) if isinstance(parsed, dict) else parsed
+        project_org = parsed.get("project_org") if isinstance(parsed, dict) else None
     except (json.JSONDecodeError, IndexError):
-        logger.error(f"Failed to parse search plan: {query_response.content[0].text}")
-        yield _sse({"type": "error", "message": "Failed to generate search queries. Please try again."})
-        yield "data: [DONE]\n\n"
-        return
+        queries = [question]
+        project_org = None
 
-    github_queries = search_plan.get("github_queries", [])
-    web_queries = search_plan.get("web_queries", [])
-    focus = search_plan.get("focus", "mixed")
+    queries = [re.sub(r'site:\S+\s*', '', q).strip() for q in queries]
+    queries = [q for q in queries if q]
 
-    logger.info(f"Research plan: {len(github_queries)} GitHub queries, {len(web_queries)} web queries, focus={focus}")
-    yield _sse({"type": "status", "message": f"Searching GitHub and web ({len(github_queries) + len(web_queries)} queries)..."})
+    logger.info(f"Deep dive queries: {queries}, org: {project_org}")
 
-    # Step 2: Run all searches in parallel
-    import asyncio
+    # Step 2: Search web + GitHub in parallel
+    web_tasks = [_web_search(q) for q in queries[:4]]
+    github_queries = queries[:2]
+    github_tasks = [_github_search_repos(q, per_page=5) for q in github_queries]
+
+    all_search_results = await asyncio.gather(*web_tasks, *github_tasks, return_exceptions=True)
+
     all_results = []
-
-    # GitHub repo searches
-    repo_tasks = [_github_search_repos(q) for q in github_queries[:5]]
-    # GitHub code searches (for finding specific integration files)
-    code_queries = [f"{q} filename:README" for q in github_queries[:3]]
-    code_tasks = [_github_search_code(q) for q in code_queries]
-    # Web searches
-    web_tasks = [_web_search(q) for q in web_queries[:3]]
-
-    search_results = await asyncio.gather(
-        *repo_tasks, *code_tasks, *web_tasks,
-        return_exceptions=True,
-    )
-
-    for result in search_results:
+    for result in all_search_results:
         if isinstance(result, list):
             all_results.extend(result)
-        elif isinstance(result, Exception):
-            logger.warning(f"Search task failed: {result}")
 
-    # Deduplicate by URL
-    seen_urls = set()
-    unique_results = []
+    # Deduplicate
+    seen = set()
+    unique = []
     for r in all_results:
-        url_normalized = r["url"].rstrip("/").lower()
-        if url_normalized not in seen_urls:
-            seen_urls.add(url_normalized)
-            unique_results.append(r)
+        url_norm = r["url"].rstrip("/").lower()
+        if url_norm not in seen:
+            seen.add(url_norm)
+            unique.append(r)
 
-    logger.info(f"Total unique results: {len(unique_results)}")
-
-    if not unique_results:
-        yield _sse({"type": "results", "results": []})
+    if not unique:
+        yield _sse({"type": "token", "content": "I couldn't find additional information online. The knowledge base answer may already be the best available."})
+        yield _sse({"type": "sources_found", "sources": []})
         yield "data: [DONE]\n\n"
         return
 
-    yield _sse({"type": "status", "message": f"Found {len(unique_results)} results. Analyzing relevance..."})
+    yield _sse({"type": "status", "message": f"Found {len(unique)} sources. Fetching content..."})
 
-    # Step 3: Use Claude to curate and rank results
-    results_text = json.dumps(unique_results[:50], indent=2)  # Cap at 50 for Claude context
+    # Step 3: Fetch content from top results
+    async def _fetch_page_text(url: str) -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+                resp = await c.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; KBaaS/1.0)"})
+                if resp.status_code != 200 or len(resp.content) > 5 * 1024 * 1024:
+                    return None
+                from trafilatura import extract
+                text = extract(resp.text)
+                return text[:3000] if text else None
+        except Exception:
+            return None
 
-    curation_response = await client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=[{
-            "role": "user",
-            "content": f"""You are curating search results for a knowledge base. The user wants to build a knowledge base about:
+    fetch_tasks = [_fetch_page_text(r["url"]) for r in unique[:5]]
+    fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-"{prompt}"
+    web_context_parts = []
+    for i, content in enumerate(fetched):
+        if isinstance(content, str) and content:
+            web_context_parts.append(f"[Source: {unique[i]['title']}]\nURL: {unique[i]['url']}\n{content}")
 
-Here are the raw search results:
-{results_text}
+    web_context = "\n\n---\n\n".join(web_context_parts) if web_context_parts else "No additional content could be extracted."
 
-Your task:
-1. Filter out irrelevant results
-2. Rank by relevance and quality (most relevant first)
-3. For GitHub repos, include the README URL (add /blob/main/README.md or /blob/master/README.md to the repo URL)
-4. Also suggest the documentation URL if the repo has docs/ or a docs site
-5. Add a concise 1-sentence reason why each result is relevant
-6. Select the best 15-25 results
+    yield _sse({"type": "status", "message": "Generating enriched answer..."})
 
-Respond with ONLY a JSON array of objects, each with:
-- "url": the URL to ingest (prefer README or docs pages over repo root)
-- "title": short descriptive title
-- "description": 1-sentence explanation of relevance
-- "source": "github" or "web"
-- "type": "repository" | "documentation" | "code" | "guide" | "article"
-- "relevance": "high" | "medium" — how relevant this is
-
-Respond with ONLY the JSON array, no other text."""
-        }],
-    )
-
+    # Step 4: Stream enriched answer
     try:
-        raw = curation_response.content[0].text.strip()
-        raw = re.sub(r'^```(?:json)?\s*', '', raw)
-        raw = re.sub(r'\s*```$', '', raw)
-        curated = json.loads(raw)
-    except (json.JSONDecodeError, IndexError):
-        logger.error(f"Failed to parse curation response")
-        # Fall back to raw results
-        curated = [
-            {
-                "url": r["url"],
-                "title": r["title"],
-                "description": r["description"],
-                "source": r["source"],
-                "type": r.get("type", "webpage"),
-                "relevance": "medium",
-            }
-            for r in unique_results[:20]
-        ]
+        async with client.messages.stream(
+            model="claude-sonnet-4-5",
+            max_tokens=4096,
+            system="""You are providing a deeper, more comprehensive answer using additional sources found on the web.
 
-    # Add selected=True to all results (user can deselect)
-    for item in curated:
-        item["selected"] = item.get("relevance") == "high"
+Rules:
+- The user already received an initial answer from their knowledge base. Now provide additional depth from the web sources below.
+- Cite your sources inline using markdown links: [source title](url)
+- Focus on NEW information not already in the initial answer
+- If you find contradictions with the initial answer, note them
+- Be thorough — this is a "deep dive" """,
+            messages=[{
+                "role": "user",
+                "content": f"""Original question: {question}
 
-    logger.info(f"Curated {len(curated)} results")
-    yield _sse({"type": "results", "results": curated})
+Initial answer from knowledge base:
+{current_answer[:1000]}
+
+Additional web sources:
+{web_context}
+
+Provide a deeper answer using these additional sources. Focus on what's new or more detailed compared to the initial answer."""
+            }],
+        ) as stream:
+            async for text in stream.text_stream:
+                yield _sse({"type": "token", "content": text})
+    except Exception as e:
+        logger.exception(f"Deep dive streaming error: {e}")
+        yield _sse({"type": "token", "content": "An error occurred while generating the deep dive. Please try again."})
+
+    # Step 5: Return sources for KB addition
+    sources_for_kb = [
+        {
+            "url": r["url"],
+            "title": r["title"],
+            "description": r.get("description", ""),
+            "source": r.get("source", "web"),
+        }
+        for r in unique[:15]
+    ]
+    yield _sse({"type": "sources_found", "sources": sources_for_kb})
     yield "data: [DONE]\n\n"
 
 

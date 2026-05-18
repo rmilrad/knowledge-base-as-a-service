@@ -10,6 +10,8 @@ interface AppLayoutProps {
   children: React.ReactNode;
   kbId?: string;
   kbName?: string;
+  /** Which manage sub-tab is active (sources | settings). Default: sources */
+  manageTab?: "sources" | "settings";
   onNewKB?: () => void;
 }
 
@@ -24,9 +26,9 @@ function getInitialTheme(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-export default function AppLayout({ children, kbId, kbName, onNewKB }: AppLayoutProps) {
+export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }: AppLayoutProps) {
   const router = useRouter();
-  const [chatOpen, setChatOpen] = useState(false);
+  const [activeView, setActiveView] = useState<"chat" | "manage">(kbId ? "chat" : "manage");
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const isDragging = useRef(false);
@@ -44,6 +46,20 @@ export default function AppLayout({ children, kbId, kbName, onNewKB }: AppLayout
     }
   }, [router]);
 
+  // When we navigate to a manage sub-tab (settings page), show manage view
+  useEffect(() => {
+    if (manageTab) {
+      setActiveView("manage");
+    }
+  }, [manageTab]);
+
+  // When KB changes, reset to chat
+  useEffect(() => {
+    if (kbId) {
+      setActiveView("chat");
+    }
+  }, [kbId]);
+
   function toggleTheme() {
     const next = theme === "light" ? "dark" : "light";
     setTheme(next);
@@ -54,7 +70,6 @@ export default function AppLayout({ children, kbId, kbName, onNewKB }: AppLayout
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!isDragging.current) return;
     e.preventDefault();
-    // Account for shell padding
     const shellPadding = 8;
     const newWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, e.clientX - shellPadding));
     setSidebarWidth(newWidth);
@@ -96,31 +111,51 @@ export default function AppLayout({ children, kbId, kbName, onNewKB }: AppLayout
         />
       </div>
       <main className="main-content">
-        <div className="main-header">
-          {kbId && (
-            <button
-              className={`chat-toggle-btn ${chatOpen ? "active" : ""}`}
-              onClick={() => setChatOpen(!chatOpen)}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              Chat
-            </button>
+        {kbId && (
+          <div className="main-header">
+            <div className="main-header-left">
+              <h2 className="main-header-title">{kbName || "Knowledge Base"}</h2>
+            </div>
+            <div className="view-switcher">
+              <button
+                className={`view-switcher-btn ${activeView === "chat" ? "active" : ""}`}
+                onClick={() => setActiveView("chat")}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                Chat
+              </button>
+              <button
+                className={`view-switcher-btn ${activeView === "manage" ? "active" : ""}`}
+                onClick={() => {
+                  setActiveView("manage");
+                  // Navigate to sources view if not already on a manage page
+                  if (!manageTab) {
+                    router.push(`/kb/${kbId}`);
+                  }
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                Manage
+              </button>
+            </div>
+          </div>
+        )}
+        {!kbId && (
+          <div className="main-header" />
+        )}
+        <div className="main-body" style={activeView === "chat" && kbId ? { padding: 0, display: "flex", flexDirection: "column" } : undefined}>
+          {kbId && activeView === "chat" ? (
+            <ChatPanel kbId={kbId} kbName={kbName || ""} />
+          ) : (
+            children
           )}
         </div>
-        <div className="main-body">
-          {children}
-        </div>
       </main>
-      {kbId && kbName && (
-        <ChatPanel
-          kbId={kbId}
-          kbName={kbName}
-          open={chatOpen}
-          onClose={() => setChatOpen(false)}
-        />
-      )}
     </div>
   );
 }

@@ -113,10 +113,10 @@ export default function SettingsPage() {
   if (!kb) return <AppLayout><p style={{ padding: "2rem", color: "var(--text-tertiary)" }}>Loading...</p></AppLayout>;
 
   return (
-    <AppLayout kbId={kb.id} kbName={kb.name}>
-      <div className="tabs">
+    <AppLayout kbId={kb.id} kbName={kb.name} manageTab="settings">
+      <div className="manage-sub-tabs">
         <Link href={`/kb/${id}`}>Sources</Link>
-        <Link href={`/kb/${id}/settings`} className="active">Settings</Link>
+        <Link href={`/kb/${id}/settings`} className="active">API Keys</Link>
       </div>
 
       {error && <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>}

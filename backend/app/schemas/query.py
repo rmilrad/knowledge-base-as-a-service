@@ -8,7 +8,6 @@ class QueryRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     model: str = "claude-sonnet-4-5"
     response_style: str = "balanced"  # concise, balanced, comprehensive
-    engineer_mode: bool = False  # require code-backed answers
 
 
 class SourceChunk(BaseModel):
@@ -20,3 +19,8 @@ class SourceChunk(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     sources: List[SourceChunk]
+
+
+class DeepDiveRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=10000)
+    current_answer: str = Field(default="", max_length=50000)

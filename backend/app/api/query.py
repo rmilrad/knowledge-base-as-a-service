@@ -9,7 +9,7 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
-from app.schemas.query import QueryRequest, QueryResponse
+from app.schemas.query import DeepDiveRequest, QueryRequest, QueryResponse
 from app.services.llm import generate_answer, stream_answer
 from app.services.retrieval import retrieve_chunks
 
@@ -37,12 +37,10 @@ async def query_kb(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_user_kb(db, kb_id, user.id)
-    # In engineer mode, retrieve more chunks for richer code context
-    top_k = body.top_k if not body.engineer_mode else max(body.top_k, 10)
-    chunks = await retrieve_chunks(db, kb_id, body.question, top_k)
+    chunks = await retrieve_chunks(db, kb_id, body.question, body.top_k)
     answer = await generate_answer(
         body.question, chunks, model=body.model,
-        response_style=body.response_style, engineer_mode=body.engineer_mode,
+        response_style=body.response_style,
     )
     return QueryResponse(
         answer=answer,
@@ -61,12 +59,34 @@ async def chat_kb(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_user_kb(db, kb_id, user.id)
-    top_k = body.top_k if not body.engineer_mode else max(body.top_k, 10)
-    chunks = await retrieve_chunks(db, kb_id, body.question, top_k)
+    chunks = await retrieve_chunks(db, kb_id, body.question, body.top_k)
     return StreamingResponse(
         stream_answer(
             body.question, chunks, model=body.model,
-            response_style=body.response_style, engineer_mode=body.engineer_mode,
+            response_style=body.response_style,
         ),
         media_type="text/event-stream",
+    )
+
+
+@router.post("/{kb_id}/deep-dive")
+async def deep_dive_kb(
+    kb_id: UUID,
+    body: DeepDiveRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deep dive: search the web for more info about a chat question."""
+    await _get_user_kb(db, kb_id, user.id)
+
+    from app.services.research import deep_dive
+
+    return StreamingResponse(
+        deep_dive(body.question, body.current_answer),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
