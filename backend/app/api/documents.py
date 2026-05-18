@@ -140,11 +140,12 @@ async def ingest_urls(
 ):
     await _get_user_kb(db, kb_id, user.id)
 
+    cleaned = [u.strip() for u in body.urls if u.strip()]
+    if len(cleaned) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 URLs per batch")
+
     docs = []
-    for url in body.urls:
-        url = url.strip()
-        if not url:
-            continue
+    for url in cleaned:
         url_path = urlparse(url).path.lower()
         file_type = "pdf" if url_path.endswith(".pdf") else "html"
         doc = Document(

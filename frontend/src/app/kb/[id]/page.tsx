@@ -312,10 +312,11 @@ export default function KBDetailPage() {
             style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem", marginBottom: "0.5rem" }}
           />
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ color: "var(--text-tertiary)", fontSize: "0.8rem" }}>
+            <span style={{ color: parseUrls(bulkUrls).length > 10 ? "var(--error)" : "var(--text-tertiary)", fontSize: "0.8rem" }}>
               {parseUrls(bulkUrls).length} URL{parseUrls(bulkUrls).length !== 1 ? "s" : ""} detected
+              {parseUrls(bulkUrls).length > 10 && " (max 10)"}
             </span>
-            <button type="submit" className="primary" disabled={uploadingBulk || parseUrls(bulkUrls).length === 0}>
+            <button type="submit" className="primary" disabled={uploadingBulk || parseUrls(bulkUrls).length === 0 || parseUrls(bulkUrls).length > 10}>
               {uploadingBulk ? "Adding..." : `Add ${parseUrls(bulkUrls).length} URLs`}
             </button>
           </div>
