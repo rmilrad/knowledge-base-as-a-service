@@ -16,15 +16,25 @@ interface KnowledgeBase {
   chunk_count: number;
 }
 
+interface DocumentMetadata {
+  progress_step?: string;
+  progress_pct?: number;
+  progress_detail?: string;
+  progress_updated_at?: number;
+  processing_time_secs?: number;
+}
+
 interface Document {
   id: string;
   title: string | null;
   source_type: string;
+  source_url: string | null;
   file_type: string | null;
   status: string;
   error_message: string | null;
   chunk_count: number;
   created_at: string;
+  metadata_: DocumentMetadata | null;
 }
 
 export default function KBDetailPage() {
@@ -41,6 +51,8 @@ export default function KBDetailPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadingUrl, setUploadingUrl] = useState(false);
   const [uploadingBulk, setUploadingBulk] = useState(false);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -51,6 +63,7 @@ export default function KBDetailPage() {
       ]);
       setKb(kbData);
       setDocs(docsData);
+      setError("");
       return docsData;
     } catch {
       setError("Failed to load knowledge base");
@@ -167,6 +180,23 @@ export default function KBDetailPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Retry failed");
     }
+  }
+
+  async function handleRenameDoc(docId: string, newTitle: string) {
+    if (!newTitle.trim()) {
+      setEditingDocId(null);
+      return;
+    }
+    try {
+      await apiFetch(`/api/kb/${id}/documents/${docId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: newTitle.trim() }),
+      });
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Rename failed");
+    }
+    setEditingDocId(null);
   }
 
   async function handleDeleteDoc(docId: string) {
@@ -311,26 +341,102 @@ export default function KBDetailPage() {
           <tbody>
             {docs.map((doc) => (
               <tr key={doc.id}>
-                <td style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {doc.title || "Untitled"}
+                <td style={{ maxWidth: 300 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                    {editingDocId === doc.id ? (
+                      <input
+                        type="text"
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onBlur={() => handleRenameDoc(doc.id, editingTitle)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleRenameDoc(doc.id, editingTitle);
+                          if (e.key === "Escape") setEditingDocId(null);
+                        }}
+                        autoFocus
+                        style={{ fontSize: "0.85rem", width: "100%", padding: "0.15rem 0.4rem" }}
+                      />
+                    ) : (
+                      <span
+                        onClick={() => { setEditingDocId(doc.id); setEditingTitle(doc.title || ""); }}
+                        style={{ cursor: "pointer", borderBottom: "1px dashed var(--border)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}
+                        title="Click to rename"
+                      >
+                        {doc.title || "Untitled"}
+                      </span>
+                    )}
+                    {doc.source_url && editingDocId !== doc.id && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(doc.source_url!);
+                          const btn = e.currentTarget;
+                          btn.style.color = "var(--success, #4caf50)";
+                          setTimeout(() => { btn.style.color = ""; }, 1200);
+                        }}
+                        title={doc.source_url}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: "0.1rem",
+                          cursor: "pointer",
+                          color: "var(--text-tertiary)",
+                          flexShrink: 0,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </td>
                 <td>{doc.file_type || doc.source_type}</td>
                 <td>
-                  <span className={`badge ${doc.status}`} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
-                    {(doc.status === "pending" || doc.status === "processing") && <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }} />}
-                    {doc.status}
-                  </span>
-                  {doc.error_message && (
-                    <span style={{ fontSize: "0.7rem", color: "var(--error)", marginLeft: "0.5rem" }}>
-                      {doc.error_message}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                    <span className={`badge ${doc.status}`} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                      {(doc.status === "pending" || doc.status === "processing") && <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }} />}
+                      {doc.status}
                     </span>
-                  )}
+                    {doc.status === "processing" && doc.metadata_?.progress_detail && (
+                      <div style={{ fontSize: "0.7rem", color: "var(--text-tertiary)" }}>
+                        <span>{doc.metadata_.progress_detail}</span>
+                        {doc.metadata_.progress_pct != null && (
+                          <div style={{
+                            marginTop: "0.15rem",
+                            height: 3,
+                            background: "var(--border)",
+                            borderRadius: 2,
+                            overflow: "hidden",
+                            width: "100%",
+                            minWidth: 60,
+                          }}>
+                            <div style={{
+                              height: "100%",
+                              width: `${doc.metadata_.progress_pct}%`,
+                              background: "var(--accent, #2196f3)",
+                              borderRadius: 2,
+                              transition: "width 0.5s ease",
+                            }} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {doc.error_message && (
+                      <span style={{ fontSize: "0.7rem", color: "var(--error)" }}>
+                        {doc.error_message}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td>{doc.chunk_count}</td>
                 <td style={{ display: "flex", gap: "0.25rem" }}>
                   {(doc.status === "error" || doc.status === "completed") && (
                     <button style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }} onClick={() => handleRetryDoc(doc.id)}>
-                      Retry
+                      Reload
                     </button>
                   )}
                   <button className="danger" style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }} onClick={() => handleDeleteDoc(doc.id)}>

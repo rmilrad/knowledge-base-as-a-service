@@ -76,6 +76,25 @@ export default function SettingsPage() {
     }
   }
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDeleteKB() {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await apiFetch(`/api/kb/${id}`, { method: "DELETE" });
+      router.push("/dashboard");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to delete knowledge base");
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
+
   const mcpConfig = JSON.stringify(
     {
       mcpServers: {
@@ -211,6 +230,32 @@ export default function SettingsPage() {
       >
         Copy Config
       </button>
+
+      <div style={{
+        marginTop: "3rem",
+        borderTop: "1px solid var(--error)",
+        paddingTop: "1.5rem",
+      }}>
+        <h3 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem", color: "var(--error)" }}>Danger Zone</h3>
+        <p style={{ color: "var(--text-tertiary)", marginBottom: "1rem", fontSize: "0.85rem" }}>
+          Permanently delete this knowledge base, all its documents, chunks, and API keys. This action cannot be undone.
+        </p>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <button
+            className="danger"
+            onClick={handleDeleteKB}
+            disabled={deleting}
+            style={{ fontWeight: 600 }}
+          >
+            {deleting ? "Deleting..." : confirmDelete ? "Click again to confirm" : "Delete Knowledge Base"}
+          </button>
+          {confirmDelete && !deleting && (
+            <button onClick={() => setConfirmDelete(false)} style={{ fontSize: "0.85rem" }}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
     </AppLayout>
   );
 }

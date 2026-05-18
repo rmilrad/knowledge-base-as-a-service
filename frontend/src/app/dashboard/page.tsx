@@ -43,6 +43,28 @@ function DashboardContent() {
     }
   }
 
+  const [deletingKbId, setDeletingKbId] = useState<string | null>(null);
+
+  async function handleDeleteKB(e: React.MouseEvent, kbId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (deletingKbId === kbId) {
+      // Second click — confirm
+      try {
+        await apiFetch(`/api/kb/${kbId}`, { method: "DELETE" });
+        setDeletingKbId(null);
+        loadKBs();
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to delete");
+        setDeletingKbId(null);
+      }
+    } else {
+      setDeletingKbId(kbId);
+      // Reset after 3s if not confirmed
+      setTimeout(() => setDeletingKbId((prev) => prev === kbId ? null : prev), 3000);
+    }
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -127,8 +149,23 @@ function DashboardContent() {
               href={`/kb/${kb.id}`}
               style={{ textDecoration: "none", color: "inherit" }}
             >
-              <div className="card">
-                <h3 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem" }}>{kb.name}</h3>
+              <div className="card" style={{ position: "relative" }}>
+                <button
+                  className="danger"
+                  onClick={(e) => handleDeleteKB(e, kb.id)}
+                  style={{
+                    position: "absolute",
+                    top: "0.5rem",
+                    right: "0.5rem",
+                    padding: "0.15rem 0.4rem",
+                    fontSize: "0.7rem",
+                    opacity: deletingKbId === kb.id ? 1 : 0.5,
+                  }}
+                  title={deletingKbId === kb.id ? "Click again to confirm" : "Delete KB"}
+                >
+                  {deletingKbId === kb.id ? "Confirm?" : "Delete"}
+                </button>
+                <h3 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem", paddingRight: "3rem" }}>{kb.name}</h3>
                 {kb.description && (
                   <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>
                     {kb.description}

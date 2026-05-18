@@ -1,4 +1,5 @@
 from typing import List
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
@@ -10,7 +11,7 @@ from app.middleware.auth import get_current_user
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
-from app.schemas.document import BulkUrlIngest, DocumentResponse, UrlIngest
+from app.schemas.document import BulkUrlIngest, DocumentResponse, DocumentUpdate, UrlIngest
 from app.services.ingestion import ingest_document
 from app.services.storage import upload_to_s3
 
@@ -106,12 +107,19 @@ async def ingest_url(
 ):
     await _get_user_kb(db, kb_id, user.id)
 
+    # Detect file type from URL extension
+    url_path = urlparse(body.url).path.lower()
+    if url_path.endswith(".pdf"):
+        file_type = "pdf"
+    else:
+        file_type = "html"
+
     doc = Document(
         kb_id=kb_id,
         title=body.url,
         source_type="url",
         source_url=body.url,
-        file_type="html",
+        file_type=file_type,
         status="pending",
     )
     db.add(doc)
@@ -137,12 +145,14 @@ async def ingest_urls(
         url = url.strip()
         if not url:
             continue
+        url_path = urlparse(url).path.lower()
+        file_type = "pdf" if url_path.endswith(".pdf") else "html"
         doc = Document(
             kb_id=kb_id,
             title=url,
             source_type="url",
             source_url=url,
-            file_type="html",
+            file_type=file_type,
             status="pending",
         )
         db.add(doc)
@@ -156,6 +166,28 @@ async def ingest_urls(
         background_tasks.add_task(ingest_document, str(doc.id))
 
     return docs
+
+
+@router.patch("/{kb_id}/documents/{doc_id}", response_model=DocumentResponse)
+async def rename_document(
+    kb_id: UUID,
+    doc_id: UUID,
+    body: DocumentUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_user_kb(db, kb_id, user.id)
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.kb_id == kb_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc.title = body.title.strip()
+    await db.commit()
+    await db.refresh(doc)
+    return doc
 
 
 @router.post("/{kb_id}/documents/{doc_id}/retry", response_model=DocumentResponse)

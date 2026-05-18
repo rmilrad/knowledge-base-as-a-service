@@ -301,7 +301,8 @@ resource "aws_ecs_task_definition" "frontend" {
     portMappings = [{ containerPort = 3000, protocol = "tcp" }]
 
     environment = [
-      { name = "NEXT_PUBLIC_API_URL", value = "" }, # Relative — proxied by ALB/CloudFront
+      { name = "NEXT_PUBLIC_API_URL", value = "" },  # Relative — proxied by ALB/CloudFront
+      { name = "HOSTNAME", value = "0.0.0.0" },      # Bind to all interfaces (required for Fargate awsvpc)
     ]
 
     logConfiguration = {
@@ -314,11 +315,11 @@ resource "aws_ecs_task_definition" "frontend" {
     }
 
     healthCheck = {
-      command     = ["CMD-SHELL", "wget -q --spider http://localhost:3000/login || exit 1"]
+      command     = ["CMD-SHELL", "node -e \"const http = require('http'); http.get('http://localhost:3000/login', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
       interval    = 30
-      timeout     = 5
-      retries     = 3
-      startPeriod = 30
+      timeout     = 10
+      retries     = 5
+      startPeriod = 90
     }
   }])
 
