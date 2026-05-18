@@ -3,9 +3,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import create_access_token, hash_password, verify_password
+from app.middleware.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.models.user import User
-from app.schemas.user import TokenResponse, UserLogin, UserRegister
+from app.schemas.user import MeResponse, TokenResponse, UserLogin, UserRegister
 
 router = APIRouter()
 
@@ -37,3 +37,8 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
             detail="Invalid email or password",
         )
     return TokenResponse(access_token=create_access_token(user.id))
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(user: User = Depends(get_current_user)):
+    return MeResponse(id=str(user.id), email=user.email, name=user.name, is_admin=user.is_admin)

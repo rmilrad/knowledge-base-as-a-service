@@ -25,6 +25,7 @@ export default function Sidebar({ onNewKB, theme, onToggleTheme }: SidebarProps)
   const router = useRouter();
   const pathname = usePathname();
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const loadKBs = useCallback(async () => {
     try {
@@ -33,6 +34,12 @@ export default function Sidebar({ onNewKB, theme, onToggleTheme }: SidebarProps)
     } catch {
       /* ignore */
     }
+  }, []);
+
+  useEffect(() => {
+    apiFetch<{ is_admin: boolean }>("/api/auth/me")
+      .then((me) => setIsAdmin(me.is_admin))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -97,6 +104,17 @@ export default function Sidebar({ onNewKB, theme, onToggleTheme }: SidebarProps)
       </div>
 
       <div className="sidebar-footer">
+        {isAdmin && (
+          <Link href="/admin" className="sidebar-footer-btn" style={{ textDecoration: "none" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+            </svg>
+            Admin
+          </Link>
+        )}
         <button className="sidebar-footer-btn" onClick={handleLogout}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
