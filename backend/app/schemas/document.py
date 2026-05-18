@@ -31,3 +31,7 @@ class UrlIngest(BaseModel):
 
 class BulkUrlIngest(BaseModel):
     urls: list[str]
+
+
+class ResearchRequest(BaseModel):
+    prompt: str

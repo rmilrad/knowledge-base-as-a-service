@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +12,7 @@ from app.middleware.auth import get_current_user
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
-from app.schemas.document import BulkUrlIngest, DocumentResponse, DocumentUpdate, UrlIngest
+from app.schemas.document import BulkUrlIngest, DocumentResponse, DocumentUpdate, ResearchRequest, UrlIngest
 from app.services.ingestion import ingest_document
 from app.services.storage import upload_to_s3
 
@@ -255,3 +256,26 @@ async def delete_document(
     kb.chunk_count = max(0, kb.chunk_count - doc.chunk_count)
 
     await db.commit()
+
+
+@router.post("/{kb_id}/research")
+async def research_for_kb(
+    kb_id: UUID,
+    body: ResearchRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI-powered research: searches GitHub and web to find relevant URLs for a KB."""
+    await _get_user_kb(db, kb_id, user.id)
+
+    from app.services.research import research_topic
+
+    return StreamingResponse(
+        research_topic(body.prompt),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

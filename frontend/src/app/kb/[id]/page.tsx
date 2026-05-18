@@ -37,6 +37,16 @@ interface Document {
   metadata_: DocumentMetadata | null;
 }
 
+interface ResearchResult {
+  url: string;
+  title: string;
+  description: string;
+  source: string;
+  type: string;
+  relevance: string;
+  selected: boolean;
+}
+
 export default function KBDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -54,6 +64,14 @@ export default function KBDetailPage() {
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Research state
+  const [showResearch, setShowResearch] = useState(false);
+  const [researchPrompt, setResearchPrompt] = useState("");
+  const [researching, setResearching] = useState(false);
+  const [researchStatus, setResearchStatus] = useState("");
+  const [researchResults, setResearchResults] = useState<ResearchResult[]>([]);
+  const [addingResearch, setAddingResearch] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -208,9 +226,106 @@ export default function KBDetailPage() {
     }
   }
 
+  async function handleResearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!researchPrompt.trim()) return;
+    setResearching(true);
+    setResearchStatus("Starting research...");
+    setResearchResults([]);
+    setError("");
+
+    try {
+      const token = localStorage.getItem("token");
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+      const resp = await fetch(`${API_URL}/api/kb/${id}/research`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ prompt: researchPrompt }),
+      });
+
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || `Research failed (${resp.status})`);
+      }
+
+      const reader = resp.body?.getReader();
+      if (!reader) throw new Error("No response stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const event = JSON.parse(payload);
+            if (event.type === "status") {
+              setResearchStatus(event.message);
+            } else if (event.type === "results") {
+              setResearchResults(event.results || []);
+              setResearchStatus("");
+            } else if (event.type === "error") {
+              setError(event.message);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Research failed");
+    } finally {
+      setResearching(false);
+    }
+  }
+
+  function toggleResearchResult(index: number) {
+    setResearchResults(prev =>
+      prev.map((r, i) => i === index ? { ...r, selected: !r.selected } : r)
+    );
+  }
+
+  function selectAllResults(selected: boolean) {
+    setResearchResults(prev => prev.map(r => ({ ...r, selected })));
+  }
+
+  async function handleAddResearchResults() {
+    const selectedUrls = researchResults.filter(r => r.selected).map(r => r.url);
+    if (!selectedUrls.length) return;
+    setAddingResearch(true);
+    setError("");
+    try {
+      await apiFetch(`/api/kb/${id}/documents/urls`, {
+        method: "POST",
+        body: JSON.stringify({ urls: selectedUrls }),
+      });
+      setResearchResults([]);
+      setShowResearch(false);
+      setResearchPrompt("");
+      await load();
+      startPolling();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add research results");
+    } finally {
+      setAddingResearch(false);
+    }
+  }
+
   const processingCount = docs.filter(
     (d) => d.status === "pending" || d.status === "processing"
   ).length;
+
+  const selectedResearchCount = researchResults.filter(r => r.selected).length;
 
   if (!kb) return <AppLayout><p style={{ padding: "2rem", color: "var(--text-tertiary)" }}>Loading...</p></AppLayout>;
 
@@ -300,6 +415,24 @@ export default function KBDetailPage() {
         >
           Bulk URLs
         </button>
+        <button
+          type="button"
+          onClick={() => { setShowResearch(!showResearch); setShowBulk(false); }}
+          style={{
+            background: showResearch ? "var(--accent, #2196f3)" : "var(--bg-primary)",
+            color: showResearch ? "#fff" : "var(--text-primary)",
+            whiteSpace: "nowrap",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.375rem",
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          AI Research
+        </button>
       </div>
 
       {showBulk && (
@@ -323,9 +456,143 @@ export default function KBDetailPage() {
         </form>
       )}
 
+      {showResearch && (
+        <div style={{
+          border: "1px solid var(--accent, #2196f3)",
+          borderRadius: "var(--radius-md)",
+          padding: "1rem",
+          marginBottom: "1.5rem",
+          background: "var(--bg-secondary)",
+        }}>
+          <form onSubmit={handleResearch} style={{ display: "flex", gap: "0.5rem", marginBottom: researchResults.length > 0 || researching ? "1rem" : 0 }}>
+            <input
+              type="text"
+              value={researchPrompt}
+              onChange={(e) => setResearchPrompt(e.target.value)}
+              placeholder="e.g. Research avalanche staking codebases for integration with my app..."
+              disabled={researching}
+              style={{ fontSize: "0.85rem", flex: 1 }}
+            />
+            <button type="submit" className="primary" disabled={researching || !researchPrompt.trim()} style={{ whiteSpace: "nowrap" }}>
+              {researching ? "Researching..." : "Research"}
+            </button>
+          </form>
+
+          {researching && researchStatus && (
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", color: "var(--text-secondary)", padding: "0.5rem 0" }}>
+              <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} />
+              {researchStatus}
+            </div>
+          )}
+
+          {researchResults.length > 0 && (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                  {researchResults.length} results found — {selectedResearchCount} selected
+                </span>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button
+                    type="button"
+                    onClick={() => selectAllResults(true)}
+                    style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectAllResults(false)}
+                    style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
+                  >
+                    Deselect All
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--bg-primary)" }}>
+                {researchResults.map((result, idx) => (
+                  <label
+                    key={idx}
+                    style={{
+                      display: "flex",
+                      gap: "0.5rem",
+                      padding: "0.6rem 0.75rem",
+                      borderBottom: idx < researchResults.length - 1 ? "1px solid var(--border)" : "none",
+                      cursor: "pointer",
+                      opacity: result.selected ? 1 : 0.6,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={result.selected}
+                      onChange={() => toggleResearchResult(idx)}
+                      style={{ marginTop: "0.2rem", flexShrink: 0 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.15rem" }}>
+                        <span style={{
+                          fontSize: "0.8rem",
+                          fontWeight: 500,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}>
+                          {result.title}
+                        </span>
+                        <span style={{
+                          fontSize: "0.65rem",
+                          padding: "0.1rem 0.35rem",
+                          borderRadius: 3,
+                          background: result.source === "github" ? "#1a1a2e" : "var(--bg-tertiary)",
+                          color: result.source === "github" ? "#c9d1d9" : "var(--text-tertiary)",
+                          flexShrink: 0,
+                        }}>
+                          {result.source === "github" ? "GitHub" : "Web"} · {result.type}
+                        </span>
+                        {result.relevance === "high" && (
+                          <span style={{ fontSize: "0.65rem", padding: "0.1rem 0.35rem", borderRadius: 3, background: "#1b5e20", color: "#a5d6a7", flexShrink: 0 }}>
+                            High
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-tertiary)", marginBottom: "0.15rem" }}>
+                        {result.description}
+                      </div>
+                      <div style={{ fontSize: "0.7rem", color: "var(--text-tertiary)", opacity: 0.7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {result.url}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "0.75rem" }}>
+                <button
+                  type="button"
+                  onClick={() => { setResearchResults([]); setResearchPrompt(""); }}
+                  style={{ fontSize: "0.85rem" }}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={handleAddResearchResults}
+                  disabled={addingResearch || selectedResearchCount === 0}
+                  style={{ fontSize: "0.85rem" }}
+                >
+                  {addingResearch ? "Adding..." : `Add ${selectedResearchCount} to KB`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {docs.length === 0 ? (
         <div style={{ textAlign: "center", padding: "3rem 2rem", color: "var(--text-tertiary)" }}>
-          <p>No documents yet. Upload files or add URLs above.</p>
+          <p>No documents yet. Upload files, add URLs, or use AI Research above.</p>
         </div>
       ) : (
         <table>
