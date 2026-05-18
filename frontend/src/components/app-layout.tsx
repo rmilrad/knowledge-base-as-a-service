@@ -18,6 +18,7 @@ interface AppLayoutProps {
 const MIN_SIDEBAR_WIDTH = 180;
 const MAX_SIDEBAR_WIDTH = 480;
 const DEFAULT_SIDEBAR_WIDTH = 260;
+const MOBILE_BREAKPOINT = 768;
 
 function getInitialTheme(): "light" | "dark" {
   if (typeof window === "undefined") return "light";
@@ -31,7 +32,24 @@ export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }
   const [activeView, setActiveView] = useState<"chat" | "manage">(kbId ? "chat" : "manage");
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const isDragging = useRef(false);
+
+  // Detect mobile
+  useEffect(() => {
+    function check() {
+      setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    }
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [kbId, manageTab]);
 
   // Initialize theme on mount
   useEffect(() => {
@@ -53,11 +71,13 @@ export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }
     }
   }, [manageTab]);
 
-  // When KB changes, reset to chat
+  // When KB changes, reset to chat (only when switching to a *different* KB)
+  const prevKbId = useRef(kbId);
   useEffect(() => {
-    if (kbId) {
+    if (kbId && kbId !== prevKbId.current) {
       setActiveView("chat");
     }
+    prevKbId.current = kbId;
   }, [kbId]);
 
   function toggleTheme() {
@@ -99,11 +119,20 @@ export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }
 
   return (
     <div className="app-shell">
-      <div className="sidebar-wrapper" style={{ width: sidebarWidth }}>
+      {/* Mobile sidebar overlay */}
+      <div
+        className={`sidebar-overlay ${sidebarOpen ? "open" : ""}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+      <div className={`sidebar-wrapper ${sidebarOpen ? "open" : ""}`} style={isMobile ? undefined : { width: sidebarWidth }}>
         <Sidebar
-          onNewKB={onNewKB || (() => router.push("/dashboard?new=1"))}
+          onNewKB={() => {
+            setSidebarOpen(false);
+            (onNewKB || (() => router.push("/dashboard?new=1")))();
+          }}
           theme={theme}
           onToggleTheme={toggleTheme}
+          onNavigate={() => setSidebarOpen(false)}
         />
         <div
           className="sidebar-resize-handle"
@@ -114,6 +143,13 @@ export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }
         {kbId && (
           <div className="main-header">
             <div className="main-header-left">
+              <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              </button>
               <h2 className="main-header-title">{kbName || "Knowledge Base"}</h2>
             </div>
             <div className="view-switcher">
@@ -146,7 +182,15 @@ export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }
           </div>
         )}
         {!kbId && (
-          <div className="main-header" />
+          <div className="main-header">
+            <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
+          </div>
         )}
         <div className="main-body" style={activeView === "chat" && kbId ? { padding: 0, display: "flex", flexDirection: "column" } : undefined}>
           {kbId && activeView === "chat" ? (

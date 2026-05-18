@@ -275,7 +275,7 @@ export default function KBDetailPage() {
           <input type="file" multiple accept=".pdf,.md,.txt" onChange={handleFileUpload} disabled={uploading} style={{ display: "none" }} />
         </label>
 
-        <form onSubmit={handleUrlSubmit} style={{ display: "flex", gap: "0.375rem", flex: 1, minWidth: 240 }}>
+        <form onSubmit={handleUrlSubmit} style={{ display: "flex", gap: "0.375rem", flex: 1, minWidth: "min(240px, 100%)" }}>
           <input
             type="url"
             value={url}
@@ -328,6 +328,7 @@ export default function KBDetailPage() {
           <p>No documents yet. Upload files or add URLs above.</p>
         </div>
       ) : (
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table>
           <thead>
             <tr>
@@ -447,6 +448,7 @@ export default function KBDetailPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       <style jsx global>{`

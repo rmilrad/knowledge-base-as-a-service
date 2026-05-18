@@ -19,9 +19,10 @@ interface SidebarProps {
   onNewKB: () => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  onNavigate?: () => void;
 }
 
-export default function Sidebar({ onNewKB, theme, onToggleTheme }: SidebarProps) {
+export default function Sidebar({ onNewKB, theme, onToggleTheme, onNavigate }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
@@ -82,6 +83,7 @@ export default function Sidebar({ onNewKB, theme, onToggleTheme }: SidebarProps)
               key={kb.id}
               href={`/kb/${kb.id}`}
               className={`sidebar-kb-item ${activeKbId === kb.id ? "active" : ""}`}
+              onClick={onNavigate}
             >
               <span className="sidebar-kb-icon">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

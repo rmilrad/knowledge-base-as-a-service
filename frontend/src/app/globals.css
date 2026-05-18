@@ -787,3 +787,150 @@ td {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* ===== Mobile hamburger button ===== */
+.mobile-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.mobile-menu-btn:hover {
+  background: var(--bg-hover);
+}
+
+/* Sidebar overlay backdrop */
+.sidebar-overlay {
+  display: none;
+}
+
+/* ===== Mobile ===== */
+@media (max-width: 768px) {
+  :root {
+    --shell-padding: 0px;
+  }
+
+  .app-shell {
+    padding: 0;
+    gap: 0;
+  }
+
+  /* Sidebar: off-screen drawer */
+  .sidebar-wrapper {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px !important;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+
+  .sidebar-wrapper.open {
+    transform: translateX(0);
+  }
+
+  .sidebar {
+    border-radius: 0;
+  }
+
+  .sidebar-resize-handle {
+    display: none;
+  }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 999;
+  }
+
+  .sidebar-overlay.open {
+    display: block;
+  }
+
+  /* Show hamburger */
+  .mobile-menu-btn {
+    display: flex;
+  }
+
+  /* Main content: full width, no rounded corners */
+  .main-content {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .main-header {
+    padding: 0.5rem 0.75rem;
+    min-height: 44px;
+  }
+
+  .main-header-title {
+    font-size: 0.85rem;
+  }
+
+  .main-body {
+    padding: 1rem;
+  }
+
+  /* Chat adjustments */
+  .chat-full-thread {
+    padding: 1rem;
+  }
+
+  .chat-bubble.user {
+    max-width: 90%;
+  }
+
+  .chat-full-input-area {
+    padding: 0.5rem 0.75rem 0.75rem;
+  }
+
+  .chat-full-controls {
+    padding: 0.4rem 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  /* View switcher */
+  .view-switcher-btn {
+    padding: 0.3rem 0.65rem;
+    font-size: 0.72rem;
+  }
+
+  /* Tables: horizontal scroll */
+  table {
+    font-size: 0.8rem;
+  }
+
+  th, td {
+    padding: 0.4rem 0.5rem;
+  }
+
+  /* Grid */
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Auth pages */
+  .auth-card {
+    margin: 1rem;
+    padding: 1.5rem;
+  }
+
+  /* Manage sub-tabs */
+  .manage-sub-tabs {
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+}

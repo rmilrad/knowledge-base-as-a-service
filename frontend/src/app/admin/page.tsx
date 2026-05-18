@@ -159,7 +159,7 @@ export default function AdminPage() {
       <div style={{
         background: "var(--bg-primary)",
         borderBottom: "1px solid var(--border)",
-        padding: "0.75rem 1.5rem",
+        padding: "0.75rem clamp(0.75rem, 3vw, 1.5rem)",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
@@ -177,7 +177,7 @@ export default function AdminPage() {
       </div>
 
       {/* Content */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "1.5rem" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "clamp(0.75rem, 3vw, 1.5rem)" }}>
 
         {/* Stat Cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
@@ -218,8 +218,8 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* Two-column layout for tables */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
+        {/* Two-column layout for tables (stacks on mobile) */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
 
           {/* Recent Users */}
           <div style={cardStyle}>
