@@ -10,9 +10,16 @@ from app.database import async_session
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
-from app.services.chunking import chunk_text
+from app.services.chunking import iter_chunks
 from app.services.embedding import generate_embeddings
 from app.services.storage import download_from_s3
+
+# Streaming ingestion: chunk + embed + insert in batches of this size, then
+# release memory before the next batch. Tuned for the BAAI/bge-small-en-v1.5
+# model (~50MB) running on a 2-4 GB container — keeps per-batch peak memory
+# bounded regardless of total document size, so we can ingest documents that
+# produce 100K+ chunks without OOM.
+EMBED_BATCH_SIZE = 256
 
 logger = logging.getLogger("kbaas.ingestion")
 
@@ -82,6 +89,31 @@ def _is_pdf_url(url: str, content_type: str | None = None) -> bool:
     return False
 
 
+async def _fetch_with_safe_redirects(url: str, max_redirects: int = 5):
+    """Fetch a URL, manually following redirects and SSRF-validating each hop.
+
+    Prevents the bypass where a public hostname redirects (302) to an internal
+    IP (e.g. 169.254.169.254 / 127.0.0.1 / 10.x.x.x). Stock `follow_redirects`
+    would re-fetch the target without re-validating it."""
+    current_url = _validate_url(url)
+    async with httpx.AsyncClient(follow_redirects=False, timeout=60.0) as client:
+        for _ in range(max_redirects + 1):
+            response = await client.get(current_url)
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get("location")
+                if not location:
+                    response.raise_for_status()
+                    return response
+                # Resolve relative redirects against the current URL
+                from urllib.parse import urljoin
+                next_url = urljoin(current_url, location)
+                current_url = _validate_url(next_url)
+                continue
+            response.raise_for_status()
+            return response
+        raise RuntimeError(f"Exceeded max redirects ({max_redirects}) for URL: {url}")
+
+
 async def extract_text_from_url(url: str) -> tuple[str, str | None]:
     """Extract text from a URL. Returns (text, page_title).
 
@@ -90,22 +122,14 @@ async def extract_text_from_url(url: str) -> tuple[str, str | None]:
     """
     logger.info(f"  Fetching URL: {url}")
     try:
-        url = _validate_url(url)
+        response = await _fetch_with_safe_redirects(url)
+        # Limit response size to 500MB
+        if len(response.content) > 500 * 1024 * 1024:
+            raise RuntimeError("URL content exceeds 500MB limit")
 
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=60.0,
-            max_redirects=5,
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            # Limit response size to 500MB
-            if len(response.content) > 500 * 1024 * 1024:
-                raise RuntimeError("URL content exceeds 500MB limit")
-
-            content_type = response.headers.get("content-type", "")
-            raw_bytes = response.content
-            logger.info(f"  Fetched {len(raw_bytes)} bytes (content-type: {content_type}, status {response.status_code})")
+        content_type = response.headers.get("content-type", "")
+        raw_bytes = response.content
+        logger.info(f"  Fetched {len(raw_bytes)} bytes (content-type: {content_type}, status {response.status_code})")
 
         # Handle PDF URLs: download bytes and parse with PyPDF
         if _is_pdf_url(url, content_type):
@@ -203,48 +227,95 @@ async def ingest_document(doc_id: str):
             if not raw_text.strip():
                 raise RuntimeError("No text content could be extracted")
 
-            # Safety cap: truncate excessively large text to prevent OOM during chunking/embedding
-            MAX_TEXT_CHARS = 2_000_000  # ~2M chars ≈ ~500K tokens, plenty for any document
-            if len(raw_text) > MAX_TEXT_CHARS:
-                logger.warning(f"[{doc_id}] Text too large ({len(raw_text)} chars), truncating to {MAX_TEXT_CHARS}")
-                raw_text = raw_text[:MAX_TEXT_CHARS]
+            # Streaming pipeline: chunk → embed → insert in batches of
+            # EMBED_BATCH_SIZE so peak memory stays bounded regardless of
+            # total document size. Supports documents producing millions of
+            # chunks without OOM.
 
-            # Step 2: Chunk
-            await _update_progress(db, doc, "chunking", 35, "Splitting into chunks...")
-            t0 = time.time()
-            chunks = chunk_text(raw_text)
-            if not chunks:
-                raise RuntimeError("Text chunking produced no chunks")
-            logger.info(f"[{doc_id}] Chunking: {len(chunks)} chunks in {time.time()-t0:.1f}s")
-
-            # Step 3: Embed (prefix chunks with doc title for better retrieval)
-            await _update_progress(db, doc, "embedding", 45, f"Embedding {len(chunks)} chunks...")
-            t0 = time.time()
             title_prefix = doc.title or "Untitled"
-            chunks_for_embedding = [f"{title_prefix}: {c}" for c in chunks]
-            embeddings = await generate_embeddings(chunks_for_embedding)
-            logger.info(f"[{doc_id}] Embedding: {len(embeddings)} vectors in {time.time()-t0:.1f}s")
+            kb_id = doc.kb_id
+            doc_pk = doc.id
+            text_len = len(raw_text)
 
-            # Step 4: Store
-            await _update_progress(db, doc, "storing", 85, f"Saving {len(chunks)} chunks...")
-            t0 = time.time()
-            chunk_objects = []
-            for i, (text, embedding) in enumerate(zip(chunks, embeddings)):
-                chunk_obj = Chunk(
-                    document_id=doc.id,
-                    kb_id=doc.kb_id,
-                    content=text,
-                    chunk_index=i,
-                    token_count=len(text.split()),
-                    embedding=embedding,
-                    metadata_={"source_title": doc.title or "Untitled"},
-                )
-                chunk_objects.append(chunk_obj)
+            await _update_progress(db, doc, "chunking", 20, "Splitting and embedding...")
 
-            db.add_all(chunk_objects)
+            chunker = iter_chunks(raw_text)
+            total_chunks = 0
+            t_embed_total = 0.0
+            t_store_total = 0.0
+            batch_chunk_texts: list[str] = []
+            # Track approximate position through the text for progress %
+            approx_pos = 0
 
+            async def _flush_batch():
+                nonlocal total_chunks, t_embed_total, t_store_total
+                if not batch_chunk_texts:
+                    return
+                # Embed this batch
+                t0 = time.time()
+                prefixed = [f"{title_prefix}: {c}" for c in batch_chunk_texts]
+                embeddings = await generate_embeddings(prefixed)
+                t_embed_total += time.time() - t0
+
+                # Insert this batch
+                t0 = time.time()
+                chunk_objects = [
+                    Chunk(
+                        document_id=doc_pk,
+                        kb_id=kb_id,
+                        content=c,
+                        chunk_index=total_chunks + i,
+                        token_count=len(c.split()),
+                        embedding=emb,
+                        metadata_={"source_title": title_prefix},
+                    )
+                    for i, (c, emb) in enumerate(zip(batch_chunk_texts, embeddings))
+                ]
+                db.add_all(chunk_objects)
+                await db.flush()
+                t_store_total += time.time() - t0
+                total_chunks += len(chunk_objects)
+                # Release memory before next batch
+                batch_chunk_texts.clear()
+
+            extract_elapsed = time.time() - start
+            logger.info(
+                f"[{doc_id}] Text extracted: {text_len} chars in {extract_elapsed:.1f}s; "
+                f"streaming chunks in batches of {EMBED_BATCH_SIZE}"
+            )
+
+            t_pipeline_start = time.time()
+            last_progress_update = 0.0
+            for chunk in chunker:
+                batch_chunk_texts.append(chunk)
+                approx_pos += len(chunk)
+                if len(batch_chunk_texts) >= EMBED_BATCH_SIZE:
+                    await _flush_batch()
+                    # Throttle progress updates to once every 2 seconds
+                    now = time.time()
+                    if now - last_progress_update > 2.0:
+                        pct = 20 + min(70, int(70 * approx_pos / max(text_len, 1)))
+                        await _update_progress(
+                            db, doc, "embedding", pct,
+                            f"Embedded {total_chunks} chunks...",
+                        )
+                        last_progress_update = now
+            # Flush remaining
+            await _flush_batch()
+
+            if total_chunks == 0:
+                raise RuntimeError("Text chunking produced no chunks")
+
+            logger.info(
+                f"[{doc_id}] Streamed {total_chunks} chunks in "
+                f"{time.time()-t_pipeline_start:.1f}s "
+                f"(embed: {t_embed_total:.1f}s, store: {t_store_total:.1f}s)"
+            )
+
+            # Step 4: Finalize document + KB counters
+            await _update_progress(db, doc, "storing", 95, f"Finalizing {total_chunks} chunks...")
             doc.status = "completed"
-            doc.chunk_count = len(chunk_objects)
+            doc.chunk_count = total_chunks
 
             # Clear progress metadata and record elapsed time
             from sqlalchemy.orm.attributes import flag_modified
@@ -259,14 +330,14 @@ async def ingest_document(doc_id: str):
             flag_modified(doc, "metadata_")
 
             kb_result = await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == doc.kb_id)
+                select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
             )
             kb = kb_result.scalar_one()
             kb.document_count += 1
-            kb.chunk_count += len(chunk_objects)
+            kb.chunk_count += total_chunks
 
             await db.commit()
-            logger.info(f"[{doc_id}] Ingestion complete: {len(chunk_objects)} chunks stored in {elapsed:.1f}s")
+            logger.info(f"[{doc_id}] Ingestion complete: {total_chunks} chunks stored in {elapsed:.1f}s")
 
         except Exception as e:
             elapsed = time.time() - start
