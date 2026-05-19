@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +41,23 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
     return TokenResponse(access_token=create_access_token(user.id))
 
 
+@router.post("/guest", response_model=TokenResponse)
+async def guest_login(db: AsyncSession = Depends(get_db)):
+    """Create a temporary guest account. Data will be deleted after the session."""
+    guest_id = uuid.uuid4().hex[:8]
+    guest_email = f"guest-{guest_id}@guest.kbaas.dev"
+    user = User(
+        email=guest_email,
+        password_hash=hash_password(uuid.uuid4().hex),
+        name=f"Guest {guest_id}",
+        is_guest=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return TokenResponse(access_token=create_access_token(user.id))
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(user: User = Depends(get_current_user)):
-    return MeResponse(id=str(user.id), email=user.email, name=user.name, is_admin=user.is_admin)
+    return MeResponse(id=str(user.id), email=user.email, name=user.name, is_admin=user.is_admin, is_guest=user.is_guest)

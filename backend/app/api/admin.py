@@ -1,5 +1,7 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import delete as sql_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -133,3 +135,21 @@ async def admin_stats(
         "top_kbs": top_kbs,
         "recent_docs": recent_docs,
     }
+
+
+@router.post("/cleanup-guests")
+async def cleanup_guests(
+    user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete guest users older than 24 hours and all their data (cascading)."""
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    result = await db.execute(
+        select(User).where(User.is_guest == True, User.created_at < cutoff)  # noqa: E712
+    )
+    guests = result.scalars().all()
+    count = len(guests)
+    for guest in guests:
+        await db.delete(guest)  # cascade deletes KBs, docs, chunks, api_keys
+    await db.commit()
+    return {"deleted": count}

@@ -29,7 +29,8 @@ function getInitialTheme(): "light" | "dark" {
 
 export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }: AppLayoutProps) {
   const router = useRouter();
-  const [activeView, setActiveView] = useState<"chat" | "manage">(kbId ? "chat" : "manage");
+  // Initialize to "manage" if we're on a manage sub-tab, so it never flashes "chat"
+  const [activeView, setActiveView] = useState<"chat" | "manage">(manageTab ? "manage" : (kbId ? "chat" : "manage"));
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -192,12 +193,18 @@ export default function AppLayout({ children, kbId, kbName, manageTab, onNewKB }
             </button>
           </div>
         )}
-        <div className="main-body" style={activeView === "chat" && kbId ? { padding: 0, display: "flex", flexDirection: "column" } : undefined}>
-          {kbId && activeView === "chat" ? (
+        {/* Chat panel: always mounted when KB is selected, hidden when on manage view */}
+        {kbId && (
+          <div className="main-body" style={{
+            padding: 0, display: "flex", flexDirection: "column",
+            ...(activeView !== "chat" ? { display: "none" } : {}),
+          }}>
             <ChatPanel kbId={kbId} kbName={kbName || ""} />
-          ) : (
-            children
-          )}
+          </div>
+        )}
+        {/* Manage view content */}
+        <div className="main-body" style={activeView === "manage" || !kbId ? undefined : { display: "none" }}>
+          {children}
         </div>
       </main>
     </div>

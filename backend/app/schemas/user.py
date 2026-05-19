@@ -31,3 +31,4 @@ class MeResponse(BaseModel):
     email: str
     name: Optional[str]
     is_admin: bool
+    is_guest: bool = False

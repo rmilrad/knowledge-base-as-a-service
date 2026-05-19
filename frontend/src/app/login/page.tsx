@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [guestLoading, setGuestLoading] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem("kbaas-theme");
@@ -70,6 +71,42 @@ export default function LoginPage() {
         <p style={{ marginTop: "1.25rem", textAlign: "center", color: "var(--text-tertiary)", fontSize: "0.85rem" }}>
           No account? <Link href="/signup">Sign up</Link>
         </p>
+
+        <div style={{
+          marginTop: "1.25rem",
+          paddingTop: "1.25rem",
+          borderTop: "1px solid var(--border-light)",
+          textAlign: "center",
+        }}>
+          <button
+            type="button"
+            onClick={async () => {
+              setGuestLoading(true);
+              setError("");
+              try {
+                const data = await apiFetch<{ access_token: string }>("/api/auth/guest", { method: "POST" });
+                setToken(data.access_token);
+                router.push("/dashboard");
+              } catch (err: unknown) {
+                setError(err instanceof Error ? err.message : "Guest login failed");
+                setGuestLoading(false);
+              }
+            }}
+            disabled={guestLoading}
+            style={{
+              width: "100%",
+              background: "var(--bg-secondary)",
+              color: "var(--text-secondary)",
+              border: "1px solid var(--border)",
+              marginBottom: "0.5rem",
+            }}
+          >
+            {guestLoading ? "Setting up..." : "Try without an account"}
+          </button>
+          <p style={{ fontSize: "0.75rem", color: "var(--text-tertiary)", lineHeight: 1.4 }}>
+            Your data will be deleted after 24 hours.
+          </p>
+        </div>
       </div>
     </div>
   );
