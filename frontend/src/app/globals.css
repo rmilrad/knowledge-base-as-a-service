@@ -536,6 +536,51 @@ label {
   text-decoration-color: var(--link);
 }
 
+/* Markdown rendering inside assistant bubbles. We render real HTML structure
+   from renderMarkdown(), so spacing is controlled here — not by `pre-wrap`
+   re-rendering source whitespace on top of element margins. */
+.chat-bubble.assistant .chat-bubble-content > *:first-child {
+  margin-top: 0;
+}
+.chat-bubble.assistant .chat-bubble-content > *:last-child {
+  margin-bottom: 0;
+}
+.chat-bubble.assistant .chat-p {
+  margin: 0 0 0.6rem;
+}
+.chat-bubble.assistant .chat-h {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.9rem 0 0.4rem;
+  line-height: 1.35;
+}
+.chat-bubble.assistant .chat-ul,
+.chat-bubble.assistant .chat-ol {
+  margin: 0.25rem 0 0.6rem;
+  padding-left: 1.25rem;
+}
+.chat-bubble.assistant .chat-ul li,
+.chat-bubble.assistant .chat-ol li {
+  margin: 0.1rem 0;
+  line-height: 1.55;
+}
+.chat-bubble.assistant .chat-code-block {
+  background: var(--bg-tertiary, #1e1e1e);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0.75rem;
+  line-height: 1.45;
+}
+.chat-bubble.assistant .chat-inline-code {
+  background: var(--bg-tertiary, #1e1e1e);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+
 .chat-full-input-area {
   padding: 0.75rem 1.25rem 1rem;
   border-top: 1px solid var(--border-light);

@@ -46,49 +46,110 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function renderMarkdown(text: string): string {
-  const codeBlocks: string[] = [];
-  let processed = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push(
-      `<pre style="background:var(--bg-tertiary,#1e1e1e);border:1px solid var(--border);border-radius:6px;padding:0.75rem;overflow-x:auto;font-size:0.8rem;margin:0.5rem 0"><code>${escapeHtml(code.trimEnd())}</code></pre>`
-    );
-    return `__CODE_BLOCK_${idx}__`;
-  });
-
+// Apply inline-only markdown (bold, code, links) to a single line of text.
+// `escapedAlready` indicates whether the caller has already HTML-escaped the
+// raw text, which is true when called from the block-level pass below.
+function renderInlineMarkdown(text: string, escapedAlready = false): string {
   const inlineCode: string[] = [];
-  processed = processed.replace(/`([^`]+)`/g, (_match, code) => {
+  let processed = text.replace(/`([^`]+)`/g, (_match, code) => {
     const idx = inlineCode.length;
     inlineCode.push(
-      `<code style="background:var(--bg-tertiary,#1e1e1e);padding:0.1rem 0.35rem;border-radius:3px;font-size:0.85em">${escapeHtml(code)}</code>`
+      `<code class="chat-inline-code">${escapeHtml(code)}</code>`
     );
-    return `__INLINE_CODE_${idx}__`;
+    return `\x00INLINE_CODE_${idx}\x00`;
   });
 
-  let html = escapeHtml(processed);
+  let html = escapedAlready ? processed : escapeHtml(processed);
 
-  codeBlocks.forEach((block, i) => {
-    html = html.replace(`__CODE_BLOCK_${i}__`, block);
-  });
-  inlineCode.forEach((code, i) => {
-    html = html.replace(`__INLINE_CODE_${i}__`, code);
+  inlineCode.forEach((c, i) => {
+    html = html.replace(`\x00INLINE_CODE_${i}\x00`, c);
   });
 
-  html = html.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    (_match: string, text: string, url: string) => {
-      if (/^https?:\/\//i.test(url)) {
-        return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
-      }
-      return `${text} (${url})`;
+  // Links: [text](url) — only render http(s); other schemes pass through.
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label: string, url: string) => {
+    if (/^https?:\/\//i.test(url)) {
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
     }
-  );
+    return `${label} (${url})`;
+  });
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(
-    /## ([^\n]+)/g,
-    '<strong style="font-size:1.05em;display:block;margin:0.75em 0 0.25em">$1</strong>'
-  );
-  html = html.replace(/^- (.+)$/gm, '<span style="display:block;padding-left:1em">&bull; $1</span>');
+  html = html.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  return html;
+}
+
+// Block-level markdown renderer. Produces real HTML structure (<p>, <ul>,
+// <h3>, <pre>) so CSS can control spacing instead of relying on `pre-wrap`,
+// which previously rendered every blank line in the source as an extra
+// visible newline on top of element margins — doubling vertical whitespace
+// between paragraphs, headings, and bullet items.
+function renderMarkdown(text: string): string {
+  // 1. Pull fenced code blocks out first so their contents are not mangled
+  //    by block parsing.
+  const codeBlocks: string[] = [];
+  let pre = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(
+      `<pre class="chat-code-block"><code>${escapeHtml(code.replace(/\s+$/, ""))}</code></pre>`
+    );
+    return `\x00CODE_BLOCK_${idx}\x00`;
+  });
+
+  // 2. Split into blocks on blank lines.
+  const blocks = pre.split(/\n{2,}/);
+  const parts: string[] = [];
+
+  for (const rawBlock of blocks) {
+    const block = rawBlock.replace(/^\n+|\n+$/g, "");
+    if (!block) continue;
+
+    // Restore code-block placeholder verbatim
+    if (/^\x00CODE_BLOCK_\d+\x00$/.test(block)) {
+      parts.push(block);
+      continue;
+    }
+
+    // Headings (`#`, `##`, `###` — we map all to a single <h4> for tight type scale)
+    const heading = block.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      parts.push(`<h4 class="chat-h">${renderInlineMarkdown(heading[2])}</h4>`);
+      continue;
+    }
+
+    // Bullet list (consecutive lines beginning with `- ` or `* `)
+    if (/^[-*]\s+/.test(block)) {
+      const items = block
+        .split(/\n/)
+        .filter((l) => /^[-*]\s+/.test(l))
+        .map((l) => `<li>${renderInlineMarkdown(l.replace(/^[-*]\s+/, ""))}</li>`)
+        .join("");
+      parts.push(`<ul class="chat-ul">${items}</ul>`);
+      continue;
+    }
+
+    // Numbered list (consecutive `1. `, `2. ` lines)
+    if (/^\d+\.\s+/.test(block)) {
+      const items = block
+        .split(/\n/)
+        .filter((l) => /^\d+\.\s+/.test(l))
+        .map((l) => `<li>${renderInlineMarkdown(l.replace(/^\d+\.\s+/, ""))}</li>`)
+        .join("");
+      parts.push(`<ol class="chat-ol">${items}</ol>`);
+      continue;
+    }
+
+    // Default: paragraph. Single newlines inside a paragraph render as
+    // soft <br> so the author's wrap is respected without a paragraph break.
+    const lines = block.split(/\n/).map((l) => renderInlineMarkdown(l));
+    parts.push(`<p class="chat-p">${lines.join("<br>")}</p>`);
+  }
+
+  let html = parts.join("");
+
+  // 3. Re-inject code blocks.
+  codeBlocks.forEach((b, i) => {
+    html = html.replace(`\x00CODE_BLOCK_${i}\x00`, b);
+  });
+
   return html;
 }
 
@@ -448,7 +509,11 @@ export default function ChatPanel({ kbId, kbName }: ChatPanelProps) {
                 <>
                   <div
                     className="chat-bubble-content"
-                    style={{ whiteSpace: "pre-wrap" }}
+                    // For assistant messages we now render real HTML (paragraphs,
+                    // lists, headings) so CSS handles spacing — `pre-wrap` here
+                    // would re-render every blank line in the source as an extra
+                    // visible newline on top of element margins.
+                    style={msg.role === "user" ? { whiteSpace: "pre-wrap" } : undefined}
                     dangerouslySetInnerHTML={{
                       __html: msg.role === "assistant"
                         ? renderMarkdown(msg.content)
