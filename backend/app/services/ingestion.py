@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from uuid import UUID
@@ -24,23 +25,52 @@ EMBED_BATCH_SIZE = 256
 logger = logging.getLogger("kbaas.ingestion")
 
 
+def _extract_pdf_sync(data: bytes) -> str:
+    """CPU-bound PDF parse; call via asyncio.to_thread."""
+    from pypdf import PdfReader
+    import io
+
+    reader = PdfReader(io.BytesIO(data))
+    pages = []
+    for page in reader.pages:
+        text = page.extract_text()
+        if text:
+            pages.append(text)
+    return "\n\n".join(pages)
+
+
+def _extract_html_sync(raw_bytes: bytes) -> tuple[str, str | None]:
+    """CPU-bound HTML extract; call via asyncio.to_thread."""
+    from trafilatura import extract
+    from bs4 import BeautifulSoup
+
+    html = raw_bytes.decode("utf-8", errors="replace")
+    soup = BeautifulSoup(html, "html.parser")
+    page_title = None
+    title_tag = soup.find("title")
+    if title_tag and title_tag.string:
+        page_title = title_tag.string.strip()[:200]
+
+    text = extract(html)
+    if text:
+        return text, page_title
+
+    for tag in soup(["script", "style", "nav", "footer", "header"]):
+        tag.decompose()
+    text = soup.get_text(separator="\n", strip=True)
+    return text, page_title
+
+
 async def extract_text_from_file(s3_key: str, file_type: str) -> str:
     logger.info(f"  Extracting text from file: type={file_type}, s3_key={s3_key}")
     data = await download_from_s3(s3_key)
     logger.info(f"  Downloaded {len(data)} bytes from S3")
 
     if file_type == "pdf":
-        from pypdf import PdfReader
-        import io
-
-        reader = PdfReader(io.BytesIO(data))
-        pages = []
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                pages.append(text)
-        logger.info(f"  Extracted text from {len(pages)} PDF pages")
-        return "\n\n".join(pages)
+        # PyPDF holds the event loop for seconds on large PDFs — run in thread.
+        text = await asyncio.to_thread(_extract_pdf_sync, data)
+        logger.info(f"  Extracted PDF text: {len(text)} chars")
+        return text
 
     if file_type in ("md", "txt"):
         text = data.decode("utf-8", errors="replace")
@@ -131,52 +161,22 @@ async def extract_text_from_url(url: str) -> tuple[str, str | None]:
         raw_bytes = response.content
         logger.info(f"  Fetched {len(raw_bytes)} bytes (content-type: {content_type}, status {response.status_code})")
 
-        # Handle PDF URLs: download bytes and parse with PyPDF
+        # Handle PDF URLs: download bytes and parse with PyPDF (off-thread)
         if _is_pdf_url(url, content_type):
             logger.info("  Detected PDF URL, extracting with PyPDF")
-            from pypdf import PdfReader
-            import io
-
-            reader = PdfReader(io.BytesIO(raw_bytes))
-            pages = []
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    pages.append(text)
-            logger.info(f"  Extracted text from {len(pages)} PDF pages")
-            if not pages:
+            text = await asyncio.to_thread(_extract_pdf_sync, raw_bytes)
+            logger.info(f"  Extracted PDF text: {len(text)} chars")
+            if not text:
                 raise RuntimeError("PDF contains no extractable text")
             # Use filename from URL path as a fallback title
             from urllib.parse import urlparse, unquote
             path = urlparse(url).path
             filename = unquote(path.split("/")[-1]) if path else None
             page_title = filename.rsplit(".", 1)[0] if filename else None
-            return "\n\n".join(pages), page_title
-
-        # HTML path: use trafilatura + BeautifulSoup
-        from trafilatura import extract
-        html = raw_bytes.decode("utf-8", errors="replace")
-        logger.info(f"  Processing as HTML ({len(html)} chars)")
-
-        # Extract page title from HTML
-        page_title = None
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "html.parser")
-        title_tag = soup.find("title")
-        if title_tag and title_tag.string:
-            page_title = title_tag.string.strip()[:200]
-            logger.info(f"  Extracted page title: {page_title}")
-
-        text = extract(html)
-        if text:
-            logger.info(f"  Trafilatura extracted {len(text)} chars")
             return text, page_title
 
-        logger.info("  Trafilatura returned empty, falling back to BeautifulSoup")
-        for tag in soup(["script", "style", "nav", "footer", "header"]):
-            tag.decompose()
-        text = soup.get_text(separator="\n", strip=True)
-        logger.info(f"  BeautifulSoup extracted {len(text)} chars")
+        # HTML path: trafilatura + BeautifulSoup are both CPU-bound — run off-thread.
+        text, page_title = await asyncio.to_thread(_extract_html_sync, raw_bytes)
         return text, page_title
     except Exception as e:
         raise RuntimeError(f"Failed to extract text from URL: {e}") from e
