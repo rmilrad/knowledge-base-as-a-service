@@ -618,18 +618,24 @@ label {
   margin-bottom: 1.5rem;
 }
 
-.manage-sub-tabs a {
+.manage-sub-tabs a,
+.manage-sub-tabs button {
   padding: 0.5rem 0;
+  border: none;
   border-bottom: 2px solid transparent;
+  background: none;
   color: var(--text-tertiary);
   font-weight: 500;
   font-size: 0.85rem;
+  cursor: pointer;
   transition: color 0.15s ease;
 }
 
-.manage-sub-tabs a:hover { color: var(--text-primary); text-decoration: none; }
+.manage-sub-tabs a:hover,
+.manage-sub-tabs button:hover { color: var(--text-primary); text-decoration: none; }
 
-.manage-sub-tabs a.active {
+.manage-sub-tabs a.active,
+.manage-sub-tabs button.active {
   border-bottom-color: var(--accent);
   color: var(--text-primary);
 }

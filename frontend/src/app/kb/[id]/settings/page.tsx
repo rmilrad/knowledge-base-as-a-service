@@ -95,20 +95,19 @@ export default function SettingsPage() {
     }
   }
 
-  const mcpConfig = JSON.stringify(
-    {
-      mcpServers: {
-        kbaas: {
-          url: "http://localhost:3001/mcp",
-          headers: {
-            Authorization: `Bearer ${newKey || "kb_your-api-key"}`,
-          },
-        },
+  const mcpUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/api/mcp/${id}`
+    : `https://dkpc4gx6pbmnd.cloudfront.net/api/mcp/${id}`;
+
+  const mcpConfigObj: Record<string, unknown> = {
+    mcpServers: {
+      kbaas: {
+        url: mcpUrl,
+        ...(newKey ? { headers: { Authorization: `Bearer ${newKey}` } } : {}),
       },
     },
-    null,
-    2
-  );
+  };
+  const mcpConfig = JSON.stringify(mcpConfigObj, null, 2);
 
   if (!kb) return <AppLayout><p style={{ padding: "2rem", color: "var(--text-tertiary)" }}>Loading...</p></AppLayout>;
 
