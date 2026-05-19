@@ -16,11 +16,14 @@ from app.services.embedding import generate_embeddings
 from app.services.storage import download_from_s3
 
 # Streaming ingestion: chunk + embed + insert in batches of this size, then
-# release memory before the next batch. Tuned for the BAAI/bge-small-en-v1.5
-# model (~50MB) running on a 2-4 GB container — keeps per-batch peak memory
-# bounded regardless of total document size, so we can ingest documents that
-# produce 100K+ chunks without OOM.
-EMBED_BATCH_SIZE = 256
+# release memory before the next batch. Tuned for BAAI/bge-small-en-v1.5
+# on a 4 GB container so per-batch peak stays bounded and we can ingest
+# documents producing 100K+ chunks without OOM.
+EMBED_BATCH_SIZE = 64
+
+# Force a gc cycle after this many batches to reclaim any references held
+# by the embedding library / numpy / SQLAlchemy temporaries.
+GC_EVERY_N_BATCHES = 10
 
 logger = logging.getLogger("kbaas.ingestion")
 
@@ -241,6 +244,7 @@ async def ingest_document(doc_id: str):
 
             chunker = iter_chunks(raw_text)
             total_chunks = 0
+            batches_processed = 0
             t_embed_total = 0.0
             t_store_total = 0.0
             batch_chunk_texts: list[str] = []
@@ -248,35 +252,52 @@ async def ingest_document(doc_id: str):
             approx_pos = 0
 
             async def _flush_batch():
-                nonlocal total_chunks, t_embed_total, t_store_total
+                nonlocal total_chunks, batches_processed, t_embed_total, t_store_total
                 if not batch_chunk_texts:
                     return
-                # Embed this batch
+                # Embed this batch (runs on a worker thread; releases the GIL
+                # via ONNX Runtime so the event loop stays responsive).
                 t0 = time.time()
                 prefixed = [f"{title_prefix}: {c}" for c in batch_chunk_texts]
                 embeddings = await generate_embeddings(prefixed)
                 t_embed_total += time.time() - t0
+                del prefixed
 
-                # Insert this batch
+                # Bulk-insert this batch using SQLAlchemy Core (no ORM identity
+                # map, so the rows are NOT retained in memory after flush).
+                # With the ORM `db.add_all(...)` path, SQLAlchemy keeps every
+                # inserted Chunk object pinned in the session's identity map,
+                # and a 3+ MB document produced 4000+ chunks each holding a
+                # 384-dim embedding — enough to OOM a 4 GB container.
                 t0 = time.time()
-                chunk_objects = [
-                    Chunk(
-                        document_id=doc_pk,
-                        kb_id=kb_id,
-                        content=c,
-                        chunk_index=total_chunks + i,
-                        token_count=len(c.split()),
-                        embedding=emb,
-                        metadata_={"source_title": title_prefix},
-                    )
+                rows = [
+                    {
+                        "document_id": doc_pk,
+                        "kb_id": kb_id,
+                        "content": c,
+                        "chunk_index": total_chunks + i,
+                        "token_count": len(c.split()),
+                        "embedding": emb,
+                        # Column is named `metadata` in the DB (Python attr
+                        # is metadata_ because SQLAlchemy reserves metadata).
+                        "metadata": {"source_title": title_prefix},
+                    }
                     for i, (c, emb) in enumerate(zip(batch_chunk_texts, embeddings))
                 ]
-                db.add_all(chunk_objects)
-                await db.flush()
+                await db.execute(Chunk.__table__.insert(), rows)
                 t_store_total += time.time() - t0
-                total_chunks += len(chunk_objects)
-                # Release memory before next batch
+                total_chunks += len(rows)
+                batches_processed += 1
+
+                # Release per-batch memory
                 batch_chunk_texts.clear()
+                del rows, embeddings
+
+                # Periodically force gc to reclaim any cycles the embedding
+                # library or numpy temporaries left behind.
+                if batches_processed % GC_EVERY_N_BATCHES == 0:
+                    import gc
+                    gc.collect()
 
             extract_elapsed = time.time() - start
             logger.info(
