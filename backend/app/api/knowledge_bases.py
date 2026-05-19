@@ -1,12 +1,12 @@
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import enforce_api_key_kb_scope, get_current_user
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.schemas.knowledge_base import KBCreate, KBResponse, KBUpdate
@@ -43,9 +43,11 @@ async def create_kb(
 @router.get("/{kb_id}", response_model=KBResponse)
 async def get_kb(
     kb_id: UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     kb = await _get_user_kb(db, kb_id, user.id)
     return kb
 
@@ -54,9 +56,11 @@ async def get_kb(
 async def update_kb(
     kb_id: UUID,
     body: KBUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     kb = await _get_user_kb(db, kb_id, user.id)
     if body.name is not None:
         kb.name = body.name
@@ -70,9 +74,14 @@ async def update_kb(
 @router.delete("/{kb_id}", status_code=204)
 async def delete_kb(
     kb_id: UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # API keys cannot delete their scoped KB (kb_id check still enforces user ownership)
+    enforce_api_key_kb_scope(request, kb_id)
+    if getattr(request.state, "api_key_kb_id", None) is not None:
+        raise HTTPException(status_code=403, detail="API keys cannot delete knowledge bases")
     kb = await _get_user_kb(db, kb_id, user.id)
     await db.delete(kb)
     await db.commit()

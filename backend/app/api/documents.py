@@ -1,13 +1,14 @@
+import re
 from typing import List
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import enforce_api_key_kb_scope, get_current_user
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
@@ -16,6 +17,20 @@ from app.services.ingestion import ingest_document
 from app.services.storage import upload_to_s3
 
 router = APIRouter()
+
+
+def _sanitize_filename(name: str | None) -> str:
+    """Strip path components and replace any non-alphanumeric/._- chars with _.
+
+    Prevents path traversal (../) and weird filenames that could break S3 keys
+    or local-storage paths."""
+    if not name:
+        return "unnamed"
+    # Take only the basename
+    name = name.replace("\\", "/").split("/")[-1]
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
+    safe = safe.strip("._") or "unnamed"
+    return safe[:200]
 
 
 async def _get_user_kb(db: AsyncSession, kb_id: UUID, user_id: UUID) -> KnowledgeBase:
@@ -34,9 +49,11 @@ async def _get_user_kb(db: AsyncSession, kb_id: UUID, user_id: UUID) -> Knowledg
 @router.get("/{kb_id}/documents", response_model=List[DocumentResponse])
 async def list_documents(
     kb_id: UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
     result = await db.execute(
         select(Document)
@@ -51,9 +68,11 @@ async def upload_documents(
     kb_id: UUID,
     files: List[UploadFile],
     background_tasks: BackgroundTasks,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     kb = await _get_user_kb(db, kb_id, user.id)
 
     allowed_types = {"pdf", "md", "txt", "text", "markdown"}
@@ -70,9 +89,11 @@ async def upload_documents(
 
         file_type = "md" if ext in ("md", "markdown") else ("txt" if ext in ("txt", "text") else ext)
 
+        safe_filename = _sanitize_filename(file.filename)
+
         doc = Document(
             kb_id=kb.id,
-            title=file.filename,
+            title=file.filename or safe_filename,  # preserve original for UI
             source_type="file_upload",
             file_type=file_type,
             file_size_bytes=len(content),
@@ -81,7 +102,7 @@ async def upload_documents(
         db.add(doc)
         await db.flush()
 
-        s3_key = f"{user.id}/{kb.id}/{doc.id}/{file.filename}"
+        s3_key = f"{user.id}/{kb.id}/{doc.id}/{safe_filename}"
         await upload_to_s3(s3_key, content)
         doc.s3_key = s3_key
 
@@ -102,9 +123,11 @@ async def ingest_url(
     kb_id: UUID,
     body: UrlIngest,
     background_tasks: BackgroundTasks,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
 
     # Detect file type from URL extension
@@ -135,9 +158,11 @@ async def ingest_urls(
     kb_id: UUID,
     body: BulkUrlIngest,
     background_tasks: BackgroundTasks,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
 
     cleaned = [u.strip() for u in body.urls if u.strip()]
@@ -174,9 +199,11 @@ async def rename_document(
     kb_id: UUID,
     doc_id: UUID,
     body: DocumentUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
     result = await db.execute(
         select(Document).where(Document.id == doc_id, Document.kb_id == kb_id)
@@ -196,9 +223,11 @@ async def retry_document(
     kb_id: UUID,
     doc_id: UUID,
     background_tasks: BackgroundTasks,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
     result = await db.execute(
         select(Document).where(Document.id == doc_id, Document.kb_id == kb_id)
@@ -235,9 +264,11 @@ async def retry_document(
 async def delete_document(
     kb_id: UUID,
     doc_id: UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
     result = await db.execute(
         select(Document).where(Document.id == doc_id, Document.kb_id == kb_id)

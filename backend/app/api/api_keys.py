@@ -3,7 +3,7 @@ import secrets
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,16 @@ from app.middleware.auth import get_current_user
 from app.models.api_key import ApiKey
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
+
+
+def _require_jwt_auth(request: Request):
+    """Reject API-key authentication for API-key management endpoints —
+    API keys should never be able to mint or revoke other API keys."""
+    if getattr(request.state, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=403,
+            detail="API key management requires user (JWT) authentication",
+        )
 
 router = APIRouter()
 
@@ -51,9 +61,11 @@ async def _get_user_kb(db: AsyncSession, kb_id: UUID, user_id: UUID) -> Knowledg
 @router.get("/{kb_id}/keys", response_model=List[ApiKeyResponse])
 async def list_keys(
     kb_id: UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    _require_jwt_auth(request)
     await _get_user_kb(db, kb_id, user.id)
     result = await db.execute(
         select(ApiKey)
@@ -77,9 +89,11 @@ async def list_keys(
 async def create_key(
     kb_id: UUID,
     body: ApiKeyCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    _require_jwt_auth(request)
     await _get_user_kb(db, kb_id, user.id)
 
     raw_key = f"kb_{secrets.token_urlsafe(32)}"
@@ -101,9 +115,11 @@ async def create_key(
 async def revoke_key(
     kb_id: UUID,
     key_id: UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    _require_jwt_auth(request)
     await _get_user_kb(db, kb_id, user.id)
     result = await db.execute(
         select(ApiKey).where(

@@ -1,12 +1,12 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import enforce_api_key_kb_scope, get_current_user
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.schemas.query import DeepDiveRequest, QueryRequest, QueryResponse
@@ -33,9 +33,11 @@ async def _get_user_kb(db: AsyncSession, kb_id: UUID, user_id: UUID) -> Knowledg
 async def query_kb(
     kb_id: UUID,
     body: QueryRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
     chunks = await retrieve_chunks(db, kb_id, body.question, body.top_k)
     answer = await generate_answer(
@@ -55,9 +57,11 @@ async def query_kb(
 async def chat_kb(
     kb_id: UUID,
     body: QueryRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
     chunks = await retrieve_chunks(db, kb_id, body.question, body.top_k)
     return StreamingResponse(
@@ -73,10 +77,12 @@ async def chat_kb(
 async def deep_dive_kb(
     kb_id: UUID,
     body: DeepDiveRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Deep dive: search the web for more info about a chat question."""
+    enforce_api_key_kb_scope(request, kb_id)
     await _get_user_kb(db, kb_id, user.id)
 
     from app.services.research import deep_dive
