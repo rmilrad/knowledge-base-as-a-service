@@ -3,7 +3,7 @@ from typing import List
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.schemas.document import BulkUrlIngest, DocumentResponse, DocumentUpdate, UrlIngest
-from app.services.ingestion import ingest_document
+from app.services.dispatcher import schedule_ingestion
 from app.services.storage import upload_to_s3
 
 router = APIRouter()
@@ -67,7 +67,6 @@ async def list_documents(
 async def upload_documents(
     kb_id: UUID,
     files: List[UploadFile],
-    background_tasks: BackgroundTasks,
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -113,7 +112,7 @@ async def upload_documents(
         await db.refresh(doc)
 
     for doc in docs:
-        background_tasks.add_task(ingest_document, str(doc.id))
+        schedule_ingestion(str(doc.id))
 
     return docs
 
@@ -122,7 +121,6 @@ async def upload_documents(
 async def ingest_url(
     kb_id: UUID,
     body: UrlIngest,
-    background_tasks: BackgroundTasks,
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -149,7 +147,7 @@ async def ingest_url(
     await db.commit()
     await db.refresh(doc)
 
-    background_tasks.add_task(ingest_document, str(doc.id))
+    schedule_ingestion(str(doc.id))
     return doc
 
 
@@ -157,7 +155,6 @@ async def ingest_url(
 async def ingest_urls(
     kb_id: UUID,
     body: BulkUrlIngest,
-    background_tasks: BackgroundTasks,
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -189,7 +186,7 @@ async def ingest_urls(
         await db.refresh(doc)
 
     for doc in docs:
-        background_tasks.add_task(ingest_document, str(doc.id))
+        schedule_ingestion(str(doc.id))
 
     return docs
 
@@ -222,7 +219,6 @@ async def rename_document(
 async def retry_document(
     kb_id: UUID,
     doc_id: UUID,
-    background_tasks: BackgroundTasks,
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -256,7 +252,7 @@ async def retry_document(
     await db.commit()
     await db.refresh(doc)
 
-    background_tasks.add_task(ingest_document, str(doc.id))
+    schedule_ingestion(str(doc.id))
     return doc
 
 
