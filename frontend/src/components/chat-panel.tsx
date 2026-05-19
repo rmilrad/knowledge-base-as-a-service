@@ -22,6 +22,10 @@ interface DeepDiveState {
   statusMessage: string;
   content: string;
   sources: DeepDiveSource[];
+  // Inline confirmation state after the user adds sources to the KB
+  addedCount?: number;
+  addedAt?: number; // epoch ms — used to fade/clear the confirmation
+  addError?: string;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -359,6 +363,16 @@ export default function ChatPanel({ kbId, kbName }: ChatPanelProps) {
         body: JSON.stringify({ urls: selectedUrls }),
       });
       if (!res.ok) throw new Error("Failed to add URLs");
+      const added = (await res.json()) as Array<{ id: string; title: string; status: string }>;
+
+      // Notify any open Sources tab in this window to immediately reload its
+      // doc list — the new URLs should appear as pending without the user
+      // having to refresh or wait for the next poll tick.
+      window.dispatchEvent(
+        new CustomEvent("kbaas:documents-added", {
+          detail: { kbId, documents: added },
+        }),
+      );
 
       setMessages((prev) => {
         const updated = [...prev];
@@ -367,11 +381,19 @@ export default function ChatPanel({ kbId, kbName }: ChatPanelProps) {
           ...s,
           selected: false,
         }));
+        ddState.addedCount = (ddState.addedCount || 0) + selectedUrls.length;
+        ddState.addedAt = Date.now();
         updated[msgIndex] = { ...updated[msgIndex], deepDive: ddState };
         return updated;
       });
-    } catch {
-      // silently fail
+    } catch (err) {
+      setMessages((prev) => {
+        const updated = [...prev];
+        const ddState = { ...updated[msgIndex].deepDive! };
+        ddState.addError = err instanceof Error ? err.message : "Failed to add";
+        updated[msgIndex] = { ...updated[msgIndex], deepDive: ddState };
+        return updated;
+      });
     } finally {
       setAddingUrls(false);
     }
@@ -505,11 +527,17 @@ export default function ChatPanel({ kbId, kbName }: ChatPanelProps) {
                                       }}
                                     >
                                       <td style={{ width: 28, padding: "6px 4px 6px 0", verticalAlign: "top" }}>
+                                        {/* Clicking the checkbox previously fired both the
+                                            input's onChange AND the row's onClick — net
+                                            two toggles, so the checkbox appeared broken.
+                                            Now the row's onClick is the single source of
+                                            truth; the checkbox just reflects state. */}
                                         <input
                                           type="checkbox"
                                           checked={src.selected || false}
-                                          onChange={() => toggleDeepDiveSource(i, si)}
-                                          style={{ accentColor: "var(--accent)" }}
+                                          readOnly
+                                          tabIndex={-1}
+                                          style={{ accentColor: "var(--accent)", cursor: "pointer", pointerEvents: "none" }}
                                         />
                                       </td>
                                       <td style={{ padding: "6px 0" }}>
@@ -550,6 +578,53 @@ export default function ChatPanel({ kbId, kbName }: ChatPanelProps) {
                                 >
                                   {addingUrls ? "Adding..." : `Add ${msg.deepDive.sources.filter((s) => s.selected).length} source${msg.deepDive.sources.filter((s) => s.selected).length !== 1 ? "s" : ""} to KB`}
                                 </button>
+                              )}
+                              {/* Inline confirmation after Add — gives the user
+                                  immediate visual feedback that the URLs were
+                                  queued, with a link to the Sources tab where
+                                  they can watch ingestion progress. */}
+                              {msg.deepDive.addedCount ? (
+                                <div style={{
+                                  marginTop: 8,
+                                  padding: "0.5rem 0.75rem",
+                                  background: "var(--success-bg, #e8f5e9)",
+                                  border: "1px solid var(--success, #4caf50)",
+                                  borderRadius: 8,
+                                  fontSize: "0.78rem",
+                                  color: "var(--text-primary)",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 8,
+                                }}>
+                                  <span>
+                                    ✓ Queued <strong>{msg.deepDive.addedCount}</strong> source{msg.deepDive.addedCount === 1 ? "" : "s"} for ingestion — they&apos;ll appear in the Sources tab as pending.
+                                  </span>
+                                  <a
+                                    href={`/kb/${kbId}`}
+                                    style={{
+                                      whiteSpace: "nowrap",
+                                      fontWeight: 600,
+                                      color: "var(--accent)",
+                                      textDecoration: "none",
+                                    }}
+                                  >
+                                    Open Sources →
+                                  </a>
+                                </div>
+                              ) : null}
+                              {msg.deepDive.addError && (
+                                <div style={{
+                                  marginTop: 8,
+                                  padding: "0.5rem 0.75rem",
+                                  background: "var(--error-bg, #ffebee)",
+                                  border: "1px solid var(--error, #f44336)",
+                                  borderRadius: 8,
+                                  fontSize: "0.78rem",
+                                  color: "var(--text-primary)",
+                                }}>
+                                  Failed to add sources: {msg.deepDive.addError}
+                                </div>
                               )}
                             </div>
                           )}

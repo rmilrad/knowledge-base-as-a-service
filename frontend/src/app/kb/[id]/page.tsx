@@ -125,10 +125,26 @@ export default function KBDetailPage() {
       if (hasProcessing(docList)) startPolling();
     });
     loadKeys();
+
+    // Listen for documents-added events fired by sibling components (e.g.
+    // the chat panel's Deep Dive "Add to KB" action). Without this, those
+    // additions wouldn't show up here until the user manually refreshed,
+    // because ChatPanel and this page are sibling React trees that don't
+    // share state. The event lets either tree push updates to the other.
+    const handleDocsAdded = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { kbId?: string } | undefined;
+      if (detail?.kbId && detail.kbId !== id) return; // not for our KB
+      load().then((docList) => {
+        if (hasProcessing(docList)) startPolling();
+      });
+    };
+    window.addEventListener("kbaas:documents-added", handleDocsAdded);
+
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      window.removeEventListener("kbaas:documents-added", handleDocsAdded);
     };
-  }, [router, load, loadKeys, hasProcessing, startPolling]);
+  }, [router, load, loadKeys, hasProcessing, startPolling, id]);
 
   function parseUrls(text: string): string[] {
     const urlPattern = /https?:\/\/[^\s,;|"'<>\]\)]+/gi;
